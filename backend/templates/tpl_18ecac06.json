@@ -1,0 +1,35 @@
+{
+  "name": "视频封面-文字居上",
+  "style": {
+    "spec": "9:16",
+    "font": "仓耳与墨W04",
+    "color": "#ffffff",
+    "weight": 400,
+    "stroke": {
+      "width": 1,
+      "color": "#3c3c3c"
+    },
+    "shadow": {
+      "width": 2,
+      "color": "#000000",
+      "blur": 3
+    },
+    "opacity": 1.0,
+    "bg": false,
+    "pos": {
+      "x": 0.5,
+      "y": 0.5
+    },
+    "anchor": "center",
+    "size_ratio": 0.04,
+    "stroke_ratio": 0.000625,
+    "shadow_ratio": 0.00125,
+    "max_width_ratio": 0.9,
+    "line_spacing": 1.2
+  },
+  "id": "tpl_18ecac06",
+  "owner": "",
+  "owner_name": "",
+  "created_at": "",
+  "shared": true
+}

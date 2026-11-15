@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光影工坊 · 一键安装</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--red:#B81C22;--red2:#D4453A;--gold:#C9A227;--ink:#2B2320;--sub:#6B5E58;
+--line:#E8DFD2;--paper:#F7F4EE;--card:#fff}
+body{background:var(--paper);color:var(--ink);font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.65}
+.wrap{max-width:860px;margin:0 auto;padding:26px 22px 60px}
+.hero{background:linear-gradient(118deg,#fff,#FDF8F1 55%,#F7EBDC);border:1px solid var(--line);
+ border-bottom:3px solid var(--gold);border-radius:18px;padding:26px 30px;position:relative;overflow:hidden}
+.hero:after{content:"";position:absolute;right:-60px;top:-90px;width:280px;height:280px;border-radius:50%;
+ background:radial-gradient(circle,rgba(201,162,39,.16),transparent 68%)}
+.brand{display:flex;align-items:center;gap:11px;margin-bottom:16px}
+.mark{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--red),var(--red2));
+ color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:16px}
+.bn{font-size:13px;font-weight:800;letter-spacing:.14em;color:var(--red)}
+.bs{font-size:11.5px;color:var(--sub)}
+h1{font-size:30px;font-weight:800;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--red)}
+.hero p{font-size:13.5px;color:var(--sub);margin-top:8px}
+.steps{display:flex;gap:6px;margin:20px 0 16px}
+.st{flex:1;text-align:center;font-size:11.5px;color:#A2968B}
+.st i{display:block;height:4px;border-radius:9px;background:#E9E1D6;margin-bottom:7px}
+.st.on i{background:linear-gradient(90deg,var(--red),var(--gold))}
+.st.on{color:var(--red);font-weight:700}
+.st.done i{background:var(--gold)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px 30px;
+ box-shadow:0 3px 14px rgba(70,50,30,.05);min-height:290px}
+section{display:none}section.on{display:block}
+h2{font-size:19px;font-weight:800;margin-bottom:10px}
+.lead{font-size:13.5px;color:var(--sub);margin-bottom:16px}
+.note{background:#FBF7F0;border:1px solid var(--line);border-radius:11px;padding:14px 16px;
+ font-size:13px;color:#4A3E38;margin-top:14px}
+.note b{color:var(--ink)}
+ul{list-style:none;margin:10px 0}li{padding:6px 0 6px 20px;position:relative;font-size:13.5px;color:#4A3E38}
+li:before{content:"";position:absolute;left:3px;top:14px;width:7px;height:7px;border-radius:50%;
+ background:linear-gradient(135deg,var(--red),var(--gold))}
+.row{display:flex;gap:8px;margin-top:18px}
+input[type=text]{flex:1;border:1px solid var(--line);border-radius:9px;padding:10px 13px;font-size:13px;
+ font-family:inherit;outline:none;background:#fff}
+input[type=text]:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,162,39,.12)}
+button{border:0;border-radius:9px;padding:10px 18px;font-size:13px;font-family:inherit;cursor:pointer;
+ font-weight:700;transition:.15s}
+button:hover{transform:translateY(-1px)}
+.btn{background:#F1EBE3;color:var(--ink)}
+.btn-p{background:linear-gradient(135deg,var(--red),var(--red2));color:#fff;box-shadow:0 5px 14px rgba(184,28,34,.2)}
+.btn:disabled,.btn-p:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.opts{margin-top:6px}
+.opt{display:flex;gap:12px;align-items:flex-start;padding:13px 0;border-bottom:1px dashed #F0E9DF}
+.opt:last-child{border-bottom:0}
+.opt input{margin-top:5px;width:16px;height:16px;accent-color:var(--red)}
+.opt b{display:block;font-size:13.5px}
+.opt span{font-size:12px;color:var(--sub)}
+.bar{height:12px;background:#F2ECE3;border-radius:99px;overflow:hidden;margin:22px 0 12px}
+.bar>i{display:block;height:100%;width:0;border-radius:99px;
+ background:linear-gradient(90deg,var(--red),var(--red2) 60%,#E1C568);transition:width .4s}
+.pct{font-size:13px;color:var(--sub)}
+.done{font-size:24px;font-weight:800;color:var(--red);margin-bottom:12px}
+.addr{background:#FBF7F0;border:1px solid var(--line);border-radius:11px;padding:15px 17px;
+ font-size:13.5px;line-height:2}
+.addr b{font-family:Consolas,monospace;color:var(--ink)}
+.copy{border:1px solid var(--line);background:#fff;border-radius:6px;padding:2px 9px;
+ font-size:11.5px;color:var(--sub);margin-left:8px;font-weight:600}
+.foot{display:flex;gap:10px;margin-top:18px;align-items:center}
+.foot .sp{flex:1}
+.hint{font-size:11.5px;color:#A2968B}
+.err{color:var(--red);font-size:13px;margin-top:10px;min-height:18px}
+/* ---------- 内置目录选择器 ---------- */
+.mask{display:none;position:fixed;inset:0;background:rgba(43,35,32,.42);z-index:50;
+ align-items:center;justify-content:center;padding:24px}
+.mask.on{display:flex}
+.pk{background:#fff;border-radius:16px;border:1px solid var(--line);width:620px;max-width:100%;
+ max-height:82vh;display:flex;flex-direction:column;box-shadow:0 18px 48px rgba(70,50,30,.25);overflow:hidden}
+.pk-h{padding:16px 20px 12px;border-bottom:1px solid var(--line);background:#FDFAF5}
+.pk-h h3{font-size:16px;font-weight:800}
+.pk-crumb{margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pk-crumb code{font-family:Consolas,monospace;font-size:12px;background:#F1EBE3;
+ border-radius:6px;padding:3px 8px;cursor:pointer;color:var(--ink)}
+.pk-crumb code.cur{background:linear-gradient(135deg,var(--red),var(--red2));color:#fff}
+.pk-crumb .up{font-size:11.5px;color:var(--red);font-weight:700;cursor:pointer;padding:2px 6px}
+.pk-body{flex:1;overflow:auto;padding:8px 12px}
+.pk-list{display:flex;flex-direction:column}
+.pk-it{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;cursor:pointer;
+ font-size:13px;color:var(--ink)}
+.pk-it:hover{background:#F7F1E8}
+.pk-it .ic{width:20px;height:20px;border-radius:6px;background:#F1EBE3;display:flex;
+ align-items:center;justify-content:center;font-size:11px}
+.pk-it.sel{background:linear-gradient(135deg,rgba(184,28,34,.08),rgba(201,162,39,.10))}
+.pk-it.sel .ic{background:linear-gradient(135deg,var(--red),var(--red2));color:#fff}
+.pk-empty{padding:26px;text-align:center;color:#A2968B;font-size:13px}
+.pk-f{border-top:1px solid var(--line);padding:12px 20px;background:#FDFAF5;display:flex;
+ gap:8px;align-items:center;flex-wrap:wrap}
+.pk-drv{display:flex;gap:6px;padding:0 20px 10px;flex-wrap:wrap}
+.pk-drv code{font-family:Consolas,monospace;font-size:12.5px;background:#fff;border:1px solid var(--line);
+ border-radius:8px;padding:4px 11px;cursor:pointer;color:var(--ink);font-weight:700}
+.pk-drv code:hover{border-color:var(--gold);color:var(--red)}
+.pk-drv .lb{font-size:11.5px;color:#A2968B;align-self:center;margin-right:2px}
+.pk-msg{font-size:12px;color:var(--red);flex:1;min-width:120px}
+.pk-new{background:#fff;border:1px solid var(--line);color:var(--ink);font-size:12px;padding:8px 13px}
+@media(max-width:640px){.wrap{padding:14px}.hero{padding:20px}.panel{padding:20px}
+ h1{font-size:23px}.st{font-size:10px}.row{flex-direction:column}.pk{width:100%}}
+</style>
+</head>
+<body>
+<div class="wrap">
+ <div class="hero">
+  <div class="brand"><div class="mark">光</div><div><div class="bn">光影工坊 · GUANGYING STUDIO</div>
+   <div class="bs">一键安装 · 本机 / 局域网通用</div></div></div>
+  <h1>光影工坊<em>一键安装</em></h1>
+  <p>自包含运行，无需 Python、无需联网、无需命令行。装在哪台机器，那台机器就是服务端。</p>
+ </div>
+ <div class="steps" id="steps"></div>
+ <div class="panel">
+  <section id="s1" class="on">
+   <h2>欢迎安装</h2>
+   <p class="lead">接下来只需几步，安装完成后即可直接使用。</p>
+   <ul>
+    <li><b>本机使用</b>：双击桌面「光影工坊」，服务自动启动并打开浏览器</li>
+    <li><b>局域网使用</b>：在「启动设置」里放行防火墙，其他设备用显示的局域网地址访问</li>
+    <li><b>无需服务器版</b>：应用本身支持本机与在线，装在哪台机器、开启访问，哪台就是服务端</li>
+   </ul>
+   <div class="note">首次打开应用时，请按页面引导<b>设置管理员账号和密码</b>。安装后约占用 230 MB 磁盘空间（含独立运行环境与视频处理组件）。</div>
+  </section>
+  <section id="s2">
+   <h2>选择安装位置</h2>
+   <p class="lead">默认装在当前用户目录，无需管理员权限，卸载更干净。</p>
+   <div class="row"><input type="text" id="dir" value=""><button class="btn" onclick="useDefault()">使用默认</button>
+    <button class="btn" onclick="browse()">浏览…</button></div>
+   <div class="note" id="dirNote">正在读取磁盘信息…</div>
+   <div class="note">若目标目录已存在旧版本，将<b>升级程序文件并保留「我的空间」、配置与作品</b>。</div>
+  </section>
+  <section id="s3">
+   <h2>安装选项</h2>
+   <p class="lead">这些选项安装后都能在「光影工坊 · 启动设置」里随时修改。</p>
+   <div class="opts">
+    <label class="opt"><input type="checkbox" id="o1" checked><div><b>创建桌面与开始菜单快捷方式</b>
+     <span>手动启动：双击「光影工坊」即可</span></div></label>
+    <label class="opt"><input type="checkbox" id="o2" checked><div><b>开机自动启动</b>
+     <span>登录 Windows 后服务在后台静默启动，不弹窗口；可随时关闭</span></div></label>
+    <label class="opt"><input type="checkbox" id="o3" checked><div><b>允许局域网访问（放行防火墙）</b>
+     <span>其他手机 / 电脑可直接访问，可能需要一次管理员授权</span></div></label>
+    <label class="opt"><input type="checkbox" id="o4" checked><div><b>安装完成后立即启动并打开应用</b>
+     <span>首次使用请在页面中设置管理员账号密码</span></div></label>
+   </div>
+  </section>
+  <section id="s4">
+   <h2>正在安装…</h2>
+   <p class="lead">正在解压运行环境与应用文件，请稍候，不要关闭本窗口。</p>
+   <div class="bar"><i id="bar"></i></div>
+   <div class="pct" id="pct">准备中…</div>
+   <div class="err" id="err"></div>
+  </section>
+  <section id="s5">
+   <div class="done">✓ 安装完成</div>
+   <p class="lead">光影工坊已就绪，首次打开请设置管理员账号密码。</p>
+   <div class="addr" id="addr"></div>
+   <div class="note">之后可在桌面「光影工坊 · 启动设置」里切换开机自启、查看局域网地址、
+    放行防火墙、修改端口或卸载。</div>
+  </section>
+ </div>
+ <div class="foot">
+  <span class="hint" id="hint">安装程序请勿关闭，完成后点「完成」退出</span>
+  <span class="sp"></span>
+  <button class="btn" id="prev" onclick="prev()">上一步</button>
+  <button class="btn-p" id="next" onclick="next()">下一步</button>
+ </div>
+</div>
+<!-- 内置目录选择器 -->
+<div class="mask" id="pkMask">
+ <div class="pk">
+  <div class="pk-h">
+   <h3>选择安装位置</h3>
+   <div class="pk-crumb" id="pkCrumb"></div>
+  </div>
+  <div class="pk-drv" id="pkDrv"></div>
+  <div class="pk-body"><div class="pk-list" id="pkList"></div></div>
+  <div class="pk-f">
+   <button class="pk-new" onclick="pkNew()">新建文件夹</button>
+   <button class="btn" onclick="pkSys()">系统窗口</button>
+   <span class="pk-msg" id="pkMsg"></span>
+   <button class="btn" onclick="pkClose()">取消</button>
+   <button class="btn-p" id="pkOk" onclick="pkConfirm()">选择此目录</button>
+  </div>
+ </div>
+</div>
+<script>
+var step=1, timer=null, defaults={}, result={};
+var names=['欢迎','安装位置','安装选项','正在安装','完成'];
+function drawSteps(){
+  document.getElementById('steps').innerHTML=names.map(function(n,i){
+    var c=(i+1===step?'on':(i+1<step?'done':''));
+    return '<div class="st '+c+'"><i></i>'+n+'</div>';
+  }).join('');
+}
+function go(n){
+  step=n;
+  for(var i=1;i<=5;i++)document.getElementById('s'+i).className=(i===n?'on':'');
+  document.getElementById('prev').style.display=(n===1||n===4||n===5)?'none':'';
+  var b=document.getElementById('next');
+  b.style.display=(n===4)?'none':'';
+  if(n===5){b.textContent='完成';b.onclick=quit;}
+  else if(n===3){b.textContent='开始安装';b.onclick=startInstall;}
+  else {b.textContent='下一步';b.onclick=next;}
+  document.getElementById('hint').textContent=(n===5?'安装完成后可关闭本窗口':'安装程序请勿关闭，完成后点「完成」退出');
+  drawSteps();
+}
+function next(){if(step<3)go(step+1);}
+function prev(){if(step>1)go(step-1);}
+async function api(a,d){
+  try{
+    var r=await fetch('/api/'+a,d?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}:undefined);
+    return await r.json();
+  }catch(e){return {ok:false,error:String(e)};}
+}
+function useDefault(){document.getElementById('dir').value=defaults.dir||'';checkDir();}
+/* ---------- 内置目录选择器 ---------- */
+var pkCur='', pkSel='';
+function browse(){openPk(document.getElementById('dir').value||defaults.dir||'');}
+function openPk(path){
+  document.getElementById('pkMask').classList.add('on');
+  pkSel='';loadPk(path||'');
+}
+function pkClose(){document.getElementById('pkMask').classList.remove('on');}
+function pkMsg(t){document.getElementById('pkMsg').textContent=t||'';}
+async function loadPk(path){
+  pkMsg('正在读取…');pkSel='';
+  var r=await api('listdir',{path:path});
+  if(!r||!r.ok){renderPkDirs([],(r&&r.drives)||[]);
+    pkMsg((r&&r.error)||'无法读取该目录，可直接在输入框粘贴路径');return;}
+  pkCur=r.path||'';
+  renderPkDirs(r.dirs||[],r.drives||[]);
+  window.pkWant='';
+  if(r.fallback){
+    window.pkWant=String(r.requested||'').replace(/[\\/]+$/,'').split(/[\\/]/).pop()||'';
+    pkMsg('原目录尚未创建，已定位到上级；可点「新建文件夹」创建或另选目录');
+  } else pkMsg('');
+}
+function renderPkDirs(dirs,drives){
+  var crumb=document.getElementById('pkCrumb');
+  var parts=pkCur?pkCur.replace(/\\+$/,'').split('\\'):['（本机）'];
+  var html='';
+  for(var i=0;i<parts.length;i++){
+    var sub=parts.slice(0,i+1).join('\\')+(i<parts.length-1?'\\':'');
+    html+='<code'+(i===parts.length-1?' class="cur"':'')+' onclick="loadPk(\''+escJs(sub||parts[i])+'\')">'
+      +escHtml(parts[i]||'')+'</code>';
+    if(i<parts.length-1)html+='<span style="color:#A2968B">›</span>';
+  }
+  crumb.innerHTML=html+'<span class="up" onclick="pkUp()">↑ 上级</span>';
+  var drv=document.getElementById('pkDrv');
+  drv.innerHTML='<span class="lb">磁盘：</span>'+drives.map(function(d){
+    return '<code onclick="loadPk(\''+escJs(d)+'\')">'+escHtml(d)+'</code>';
+  }).join('');
+  var list=document.getElementById('pkList');
+  list.innerHTML=dirs.length?dirs.map(function(n){
+    return '<div class="pk-it" id="pki-'+escId(n)+'" onclick="pkPick(this,\''+escJs(n)+'\')">'
+      +'<span class="ic">📁</span><span>'+escHtml(n)+'</span></div>';
+  }).join(''):'<div class="pk-empty">此目录下没有子文件夹</div>';
+  document.getElementById('pkOk').disabled=false;
+}
+function pkPick(el,name){
+  document.querySelectorAll('.pk-it.sel').forEach(function(x){x.classList.remove('sel');});
+  el.classList.add('sel');pkSel=name;
+}
+function pkUp(){
+  var r=pkCur.replace(/\\+$/,'').split('\\');r.pop();
+  var p=r.length?r.join('\\'):'';
+  loadPk(p?(r.length===1?p+'\\':p):'');
+}
+async function pkNew(){
+  var name=prompt('在当前目录下新建文件夹，名称：',window.pkWant||'');
+  if(name===null)return;
+  var r=await api('mkdir',{parent:pkCur,name:name});
+  if(r&&r.ok){pkMsg('');loadPk(r.dir);setTimeout(function(){
+    var el=document.getElementById('pki-'+escId((r.dir.split('\\').pop()||'')));
+    if(el)pkPick(el,r.dir.split('\\').pop());
+  },250);}
+  else pkMsg((r&&r.error)||'新建文件夹失败');
+}
+async function pkSys(){
+  pkMsg('正在打开系统窗口…');
+  var r=await api('browse',{});
+  if(r&&r.dir){document.getElementById('dir').value=r.dir;pkClose();checkDir();}
+  else pkMsg((r&&r.error)||'没有选择目录');
+}
+function pkConfirm(){
+  var target=pkSel?(pkCur.replace(/\\+$/,'')+'\\'+pkSel):pkCur;
+  if(!target){pkMsg('请先进入或选中一个目录');return;}
+  document.getElementById('dir').value=target;
+  pkClose();checkDir();
+}
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function escId(s){return String(s).replace(/[^a-zA-Z0-9_\-\.]/g,'_');}
+function escJs(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')pkClose();});
+document.getElementById('pkMask').addEventListener('click',function(e){
+  if(e.target===this)pkClose();});
+async function checkDir(){
+  var d=document.getElementById('dir').value;
+  var r=await api('checkdir',{dir:d});
+  document.getElementById('dirNote').innerHTML=r&&r.ok
+    ? '可用空间：<b>'+r.free_gb+' GB</b> · 路径有效'+(r.exists?' · <b>检测到旧版本，将升级并保留数据</b>':'')
+    : '<span style="color:#B81C22">'+((r&&r.error)||'路径不可用')+'</span>';
+}
+async function init(){
+  defaults=await api('defaults',{});
+  document.getElementById('dir').value=defaults.dir||'';
+  checkDir();drawSteps();
+  if(location.hash==='#picker'){go(2);openPk(defaults.dir||'');}
+}
+async function startInstall(){
+  var d=document.getElementById('dir').value.trim();
+  if(!d){alert('请填写安装目录');return;}
+  go(4);
+  var r=await api('install',{dir:d,autostart:document.getElementById('o2').checked,
+    shortcut:document.getElementById('o1').checked,lan:document.getElementById('o3').checked,
+    launch:document.getElementById('o4').checked});
+  if(r&&r.ok===false){document.getElementById('err').textContent=r.error||'无法开始安装';return;}
+  timer=setInterval(async function(){
+    var p=await api('progress',{});
+    if(!p)return;
+    document.getElementById('bar').style.width=(p.pct||0)+'%';
+    document.getElementById('pct').textContent=p.msg||('正在安装… '+(p.pct||0)+'%');
+    if(p.done){
+      clearInterval(timer);
+      if(!p.ok){document.getElementById('err').textContent=p.error||'安装失败';return;}
+      result=p;
+      var lines=['<div>本机访问：<b>http://127.0.0.1:'+(p.port||2026)+'</b>'+
+        '<button class="copy" onclick="cp(\'http://127.0.0.1:'+(p.port||2026)+'\')">复制</button></div>'];
+      (p.ips||[]).forEach(function(ip){
+        var u='http://'+ip+':'+(p.port||2026);
+        lines.push('<div>局域网访问：<b>'+u+'</b><button class="copy" onclick="cp(\''+u+'\')">复制</button></div>');
+      });
+      if(!(p.ips||[]).length)lines.push('<div>局域网地址：联网后到「启动设置」查看</div>');
+      lines.push('<div style="margin-top:8px;color:#6B5E58;font-size:12.5px">安装目录：'+(p.dir||'')+'</div>');
+      document.getElementById('addr').innerHTML=lines.join('');
+      go(5);
+      startAutoClose();
+    }
+  },700);
+}
+function cp(t){navigator.clipboard&&navigator.clipboard.writeText(t);}
+var ac=null;
+function startAutoClose(){
+  var left=60;
+  var h=document.getElementById('hint');
+  function tick(){
+    h.textContent='安装程序将在 '+left+' 秒后自动退出，点「完成」可立即关闭';
+    if(left<=0){quit();return;}
+    left--;
+  }
+  tick();
+  ac=setInterval(tick,1000);
+}
+async function quit(){
+  if(ac){clearInterval(ac);ac=null;}
+  await api('quit',{});window.close();setTimeout(function(){location.href='about:blank';},300);
+}
+document.getElementById('dir').addEventListener('input',function(){clearTimeout(window._t);window._t=setTimeout(checkDir,350);});
+init();
+</script>
+</body></html>

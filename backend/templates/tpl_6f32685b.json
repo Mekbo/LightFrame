@@ -1,0 +1,35 @@
+{
+  "name": "模板-图片通用-文字居中",
+  "style": {
+    "spec": "16:9",
+    "font": "仓耳与墨W05",
+    "color": "#ffffff",
+    "weight": 400,
+    "stroke": {
+      "width": 1,
+      "color": "#000000"
+    },
+    "shadow": {
+      "width": 2,
+      "color": "#323232",
+      "blur": 3
+    },
+    "opacity": 1.0,
+    "bg": false,
+    "pos": {
+      "x": 0.5,
+      "y": 0.5
+    },
+    "anchor": "center",
+    "size_ratio": 0.06,
+    "stroke_ratio": 0.000925925925925926,
+    "shadow_ratio": 0.001851851851851852,
+    "max_width_ratio": 0.9,
+    "line_spacing": 1.2
+  },
+  "id": "tpl_6f32685b",
+  "owner": "u_e9f99d7d7a6e",
+  "owner_name": "admin",
+  "created_at": "2026-11-14T13:54:11",
+  "shared": false
+}

@@ -1,0 +1,18 @@
+# ---- 用户数据与密钥：绝不入库（含账号哈希 / API 密钥 / 会话）----
+config/
+space/
+data/
+output/
+logs/
+
+# ---- 构建产物（可由 installer/build.py 随时重新生成）----
+installer/build/
+installer/dist/
+__pycache__/
+*.pyc
+
+# ---- 本地运行时文件 ----
+*.port
+
+# ---- 工作区内部数据 ----
+.workbuddy/

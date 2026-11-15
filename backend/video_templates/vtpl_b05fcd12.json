@@ -1,0 +1,64 @@
+{
+  "id": "vtpl_b05fcd12",
+  "name": "标题边框黄字+字幕阴影白字",
+  "spec": "9:16",
+  "subtitle_enabled": true,
+  "title_enabled": true,
+  "subtitle": {
+    "spec": "9:16",
+    "font": "仓耳与墨W04",
+    "color": "#ffffff",
+    "weight": 400,
+    "stroke": {
+      "width": 0
+    },
+    "shadow": {
+      "width": 3,
+      "color": "#373737",
+      "blur": 5
+    },
+    "opacity": 1.0,
+    "bg": false,
+    "pos": {
+      "x": 0.5,
+      "y": 0.7
+    },
+    "anchor": "center",
+    "size_ratio": 0.03,
+    "stroke_ratio": 0.0,
+    "shadow_ratio": 0.001875,
+    "max_width_ratio": 0.86,
+    "line_spacing": 1.25
+  },
+  "title": {
+    "spec": "9:16",
+    "font": "仓耳与墨W03",
+    "color": "#fdee26",
+    "weight": 700,
+    "stroke": {
+      "width": 4,
+      "color": "#3a2410"
+    },
+    "shadow": {
+      "width": 1,
+      "color": "#000000",
+      "blur": 2
+    },
+    "opacity": 1.0,
+    "bg": false,
+    "pos": {
+      "x": 0.5,
+      "y": 0.12
+    },
+    "anchor": "center",
+    "size_ratio": 0.04,
+    "stroke_ratio": 0.0025,
+    "shadow_ratio": 0.000625,
+    "max_width_ratio": 0.88,
+    "line_spacing": 1.2
+  },
+  "owner": "",
+  "owner_name": "",
+  "created_at": "",
+  "shared": true
+}
