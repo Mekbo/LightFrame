@@ -1,4 +1,4 @@
-"""应用版本、功能更新日志与版本状态检查（正式版 1.0.0）。
+"""应用版本、功能更新日志与版本状态检查（正式版 1.0.1）。
 
 设计要点：
 - 版本真值只有一处：APP_VERSION；更新检查周期真值只有一处：全局配置
@@ -7,12 +7,16 @@
   两者都拿不到时只标记「暂未获取到发布信息」，绝不伪造「有更新」。
 - 检查结果缓存于 config/update_status.json，按周期到期才联网，避免每次开页都请求；
   用户点「立即检查更新」时 force=True 可绕过周期手动刷新。
-- 全程只用标准库 urllib，超时 4 秒；联网失败不影响界面，保留上次检查结果。
+- 全程只用标准库 urllib；联网失败不影响界面，保留上次检查结果。
+- 公司/局域网常部署 HTTPS 中间人代理：浏览器装了企业根证书，Python 自带证书库不认，
+  会报 CERTIFICATE_VERIFY_FAILED。_request() 按「标准库 → 系统 CA → 兼容模式」逐级回退，
+  仅证书类错误才回退；该请求是只读公开版本信息、不发送任何凭据，兼容模式风险可控。
 """
 from __future__ import annotations
 
 import json
 import re
+import ssl
 import threading
 import urllib.error
 import urllib.request
@@ -21,8 +25,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.0"
-RELEASE_DATE = "2026-11-14"
+APP_VERSION = "1.0.1"
+RELEASE_DATE = "2026-11-16"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -36,11 +40,24 @@ CYCLE_LABELS = {
 }
 DEFAULT_CYCLE = "week"
 STATUS_PATH = CONFIG_DIR / "update_status.json"
-_TIMEOUT = 4.0
+_TIMEOUT = 8.0          # 公司局域网经代理出网更慢，4 秒太紧
 _lock = threading.Lock()
+_LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
+# 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
+BUILD_TAG = "v1.0.1-certfix-20261116"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
+    {
+        "version": "1.0.1",
+        "date": RELEASE_DATE,
+        "title": "修复局域网更新检查的证书兼容问题",
+        "items": [
+            "系统更新：修复公司局域网 HTTPS 代理证书不受信导致「无法获取在线版本」的问题，自动分级兼容",
+            "系统更新：网络超时从 4 秒放宽到 8 秒，局域网出网更稳",
+            "系统更新：新增证书策略诊断信息，便于排查网络环境问题",
+        ],
+    },
     {
         "version": "1.0.0",
         "date": RELEASE_DATE,
@@ -102,7 +119,40 @@ def _save_status(st: dict) -> None:
         pass
 
 
+class CertVerifyError(Exception):
+    """本地证书链不受信（公司 HTTPS 代理常见），可安全降级重试。"""
+
+
+def _is_cert_error(exc: BaseException) -> bool:
+    """识别 SSL 证书校验失败；DNS / 超时 / HTTP 错误不误判。"""
+    chain = [exc]
+    reason = getattr(exc, "reason", None)
+    if reason is not None:
+        chain.append(reason)
+    for item in chain:
+        if isinstance(item, ssl.SSLCertVerificationError):
+            return True
+        if isinstance(item, ssl.SSLError) and "CERTIFICATE_VERIFY_FAILED" in str(item).upper():
+            return True
+        text = str(item).lower()
+        if "certificate verify failed" in text or "unable to get local issuer certificate" in text:
+            return True
+    return False
+
+
+def _ssl_strategies():
+    """证书策略按信任强度递减：默认 → 系统 CA → 兼容模式（不校验）。"""
+    yield "default", None                       # Python 默认证书库
+    try:
+        yield "system_ca", ssl.create_default_context()   # Windows 系统存储（含企业根证书）
+    except Exception:
+        pass
+    yield "compat_no_verify", ssl._create_unverified_context()   # 最后兜底
+
+
 def _request(url: str, timeout: float = _TIMEOUT) -> str:
+    """请求公开版本信息；仅在证书链不受信时逐级降级，其它错误原样抛出。"""
+    global _LAST_SSL_MODE
     req = urllib.request.Request(
         url,
         headers={
@@ -110,8 +160,19 @@ def _request(url: str, timeout: float = _TIMEOUT) -> str:
             "Accept": "application/vnd.github+json, text/plain, */*",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "replace")
+    cert_error = None
+    for mode, ctx in _ssl_strategies():
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                text = r.read().decode("utf-8", "replace")
+            _LAST_SSL_MODE = mode
+            return text
+        except Exception as e:
+            if _is_cert_error(e):
+                cert_error = e
+                continue                        # 换下一种证书策略重试
+            raise                               # 超时 / 404 / DNS 等不做无谓重试
+    raise CertVerifyError(str(cert_error) if cert_error else "证书校验失败")
 
 
 def _clean_version(s) -> str:
@@ -199,6 +260,7 @@ def get_status(force: bool = False) -> dict:
                     st.update(_fetch_remote())
                     st["check_error"] = ""
                     st["no_release"] = False
+                    st["ssl_mode"] = _LAST_SSL_MODE
                 except NoReleaseError:
                     # 仓库可访问但尚未发布任何在线版本：本地正式版即为最新，不算检查失败
                     st["check_error"] = ""
@@ -207,7 +269,7 @@ def get_status(force: bool = False) -> dict:
                     st["release_notes"] = ""
                     st["source"] = "no_release"
                 except Exception as e:
-                    st["check_error"] = str(e)[:180]
+                    st["check_error"] = "[%s] %s" % (BUILD_TAG, str(e)[:180])
                     st["no_release"] = False
                 st["last_checked_at"] = _now().isoformat(timespec="seconds")
                 st["cycle"] = cycle
@@ -261,6 +323,7 @@ def get_status(force: bool = False) -> dict:
         "next_check_at": next_check,
         "checked_now": checked_now,
         "check_error": str(st.get("check_error") or ""),
+        "check_ssl_mode": str(st.get("ssl_mode") or ""),
         "changelog": CHANGELOG,
     }
 
