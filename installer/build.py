@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """光影工坊 · 阶段 6 一键构建脚本。
 
-产出：output/光影工坊_一键安装包_v1.0.1.exe（单文件、双击即装、无需 Python / 联网 / 命令行）
+产出：output/光影工坊_一键安装包_v1.0.exe（单文件、双击即装、无需 Python / 联网 / 命令行）
 
 构建内容：
   1. 生成红金应用图标
@@ -40,7 +40,7 @@ DEPS = [
     "python-multipart==0.0.33",
 ]
 APP_EXE_NAME = "光影工坊"
-SETUP_EXE_NAME = "光影工坊_一键安装包_v1.0.1"
+SETUP_EXE_NAME = "光影工坊_一键安装包_v1.0"
 EMPTY_DIRS = [
     "app/config", "app/config/users", "app/data", "app/space", "app/output",
     "app/tools/ffmpeg", "app/backend/templates", "app/backend/video_templates",

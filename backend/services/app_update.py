@@ -1,4 +1,4 @@
-"""应用版本、功能更新日志与版本状态检查（正式版 1.0.1）。
+"""应用版本、功能更新日志与版本状态检查（正式版 1.0.0）。
 
 设计要点：
 - 版本真值只有一处：APP_VERSION；更新检查周期真值只有一处：全局配置
@@ -25,8 +25,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.1"
-RELEASE_DATE = "2026-11-16"
+APP_VERSION = "1.0.0"
+RELEASE_DATE = "2026-11-14"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -44,25 +44,16 @@ _TIMEOUT = 8.0          # 公司局域网经代理出网更慢，4 秒太紧
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.1-certfix-20261116"
+BUILD_TAG = "v1.0.0-certfix-20261116"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
-    {
-        "version": "1.0.1",
-        "date": RELEASE_DATE,
-        "title": "修复局域网更新检查的证书兼容问题",
-        "items": [
-            "系统更新：修复公司局域网 HTTPS 代理证书不受信导致「无法获取在线版本」的问题，自动分级兼容",
-            "系统更新：网络超时从 4 秒放宽到 8 秒，局域网出网更稳",
-            "系统更新：新增证书策略诊断信息，便于排查网络环境问题",
-        ],
-    },
     {
         "version": "1.0.0",
         "date": RELEASE_DATE,
         "title": "正式版首个发布",
         "items": [
+            "系统更新：内置局域网 HTTPS 代理证书兼容（默认 → 系统 CA → 兼容模式三级回退），公司网络也能正常核对版本",
             "图片处理：格式转换、裁切、缩放、去水印、图片加文字、Live 图提取，支持批量上传与并发队列",
             "文案生产：选题搭建 → 脚本创作 → 配音生成 → 封面制作 → 打包文案，五步完成一套素材",
             "视频创作：九步向导配置素材、封面、配音字幕、视频模板、背景乐、时长、转场与原创度校验",
