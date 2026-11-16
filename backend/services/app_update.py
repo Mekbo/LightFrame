@@ -13,6 +13,9 @@
   仅证书类错误才回退；该请求是只读公开版本信息、不发送任何凭据，兼容模式风险可控。
 - _urlopen_with_cert_fallback() 抽出公共请求逻辑，供版本信息（文本）与增量补丁包
   （二进制）共用同一套证书兼容策略。
+- 家庭宽带访问 GitHub 属跨境链路，存在「间歇性抖动」（连接被重置 / 偶发超时）：
+  _request() 在证书分级之外再叠加网络重试，并对最终异常保留原始类型与信息，
+  避免只报笼统的「网络不可达」而无法定位。
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import json
 import re
 import ssl
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
@@ -42,11 +46,13 @@ CYCLE_LABELS = {
 }
 DEFAULT_CYCLE = "week"
 STATUS_PATH = CONFIG_DIR / "update_status.json"
-_TIMEOUT = 8.0          # 公司局域网经代理出网更慢，4 秒太紧
+_TIMEOUT = 8.0          # 单次请求超时；配合重试覆盖跨境链路抖动
+_NET_RETRIES = 3         # 网络类错误（超时/连接重置）重试次数，证书错误不走这里
+_NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.0-base-20261116"
+BUILD_TAG = "v1.0.0-netretry-20261116"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
@@ -155,8 +161,31 @@ def _make_request(url: str, accept: str = "application/vnd.github+json, text/pla
     )
 
 
+class _RespContext:
+    """把 (response, mode) 包装成上下文管理器，供 `with ... as (r, mode)` 解包。
+
+    历史 bug：本函数过去直接 return 一个普通元组，调用方却用 `with 元组 as (r, mode)`，
+    导致每次请求都在 __enter__ 阶段抛 `TypeError: tuple 不支持上下文管理器协议`。
+    该异常被上层压成「网络不可达」，掩盖了真正原因。现改为可解包的上下文管理器。
+    """
+
+    def __init__(self, response, mode):
+        self._response = response
+        self._mode = mode
+
+    def __enter__(self):
+        return self._response, self._mode
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            self._response.close()
+        except Exception:
+            pass
+        return False
+
+
 def _urlopen_with_cert_fallback(req, timeout: float = _TIMEOUT):
-    """按证书策略逐级降级发起请求，返回 (response, mode)。
+    """按证书策略逐级降级发起请求，返回可 `with ... as (response, mode)` 的上下文管理器。
 
     仅证书链不受信时降级；超时 / 404 / DNS 等原样抛出，避免无谓重试。
     """
@@ -166,7 +195,7 @@ def _urlopen_with_cert_fallback(req, timeout: float = _TIMEOUT):
         try:
             r = urllib.request.urlopen(req, timeout=timeout, context=ctx)
             _LAST_SSL_MODE = mode
-            return r, mode
+            return _RespContext(r, mode)
         except Exception as e:
             if _is_cert_error(e):
                 cert_error = e
@@ -176,10 +205,26 @@ def _urlopen_with_cert_fallback(req, timeout: float = _TIMEOUT):
 
 
 def _request(url: str, timeout: float = _TIMEOUT) -> str:
-    """请求公开版本信息（文本）；复用证书分级策略。"""
+    """请求公开版本信息（文本）；证书分级 + 网络抖动重试，并保留原始异常。
+
+    家庭宽带访问 GitHub 是跨境链路，偶发连接重置 / 超时（诊断当时能通、下一刻
+    检查却失败，即典型抖动）。这里对网络类错误重试 _NET_RETRIES 次；证书全失败
+    与 HTTP 4xx/5xx 不重试（重试无意义）。最终把**原始异常**抛出，让上层能看到
+    究竟是 TimeoutError / ConnectionResetError 还是别的，不再只报笼统文案。
+    """
     req = _make_request(url)
-    with _urlopen_with_cert_fallback(req, timeout) as (r, _mode):
-        return r.read().decode("utf-8", "replace")
+    last_exc = None
+    for attempt in range(_NET_RETRIES):
+        try:
+            with _urlopen_with_cert_fallback(req, timeout) as (r, _mode):
+                return r.read().decode("utf-8", "replace")
+        except (CertVerifyError, urllib.error.HTTPError):
+            raise                      # 证书全失败 / HTTP 错误：重试无意义
+        except Exception as e:         # 超时 / 连接重置 / DNS 等网络抖动
+            last_exc = e
+            if attempt < _NET_RETRIES - 1:
+                time.sleep(_NET_BACKOFF * (attempt + 1))
+    raise last_exc
 
 
 def _request_bytes(url: str, timeout: float = 60.0,
@@ -250,19 +295,24 @@ def _fetch_remote() -> dict:
             "checksum_asset": sums or {},
         }
 
-    # 仓库还没建 Release 时，回退读取根目录 VERSION 纯文本
+    # Release API 拿不到有效数据时（限流 / 返回非 Release JSON / 网络抖动），
+    # 回退读取根目录 VERSION 纯文本。超时必须与主请求一致：
+    # 早前这里写死 2 秒，家里「通但慢」的网络下必然超时，误报"网络不可达"。
     try:
-        txt = _request(VERSION_RAW, timeout=2.0).strip()
+        txt = _request(VERSION_RAW, timeout=_TIMEOUT).strip()
     except urllib.error.HTTPError as e:
         if e.code == 404 or release_404:
             raise NoReleaseError("仓库尚未发布在线版本记录")
         raise RuntimeError("读取 VERSION 文件失败（HTTP %s）" % e.code)
-    except Exception:
+    except Exception as e:
         # 已确认「无 Release」时，辅助版本文件取不到也仍按「暂无在线发布记录」处理，
         # 不把网络抖动误报成检查失败。
         if release_404:
             raise NoReleaseError("仓库尚未发布在线版本记录")
-        raise RuntimeError("网络不可达或读取超时")
+        # 保留原始异常类型与信息：跨境链路失败可能是超时、连接重置、远程断开等，
+        # 全部压成一句「网络不可达」会掩盖真因，无法对症处理。
+        raise RuntimeError("网络不可达或读取超时（%s: %s）" %
+                           (type(e).__name__, str(e)[:140]))
     if not re.fullmatch(r"v?\d+(?:\.\d+){0,3}", txt):
         raise RuntimeError("VERSION 文件内容不是有效版本号")
     return {
