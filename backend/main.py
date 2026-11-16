@@ -35,6 +35,7 @@ from .services import video as video_svc
 from .services import livephoto as live_svc
 from .services import prompt_templates as ptpl_svc
 from .services import app_update as update_svc
+from .services import app_updater as updater_svc
 from .services import developer_contact as dev_svc
 from .services import space as space_svc
 from .services import material as mat_svc
@@ -132,6 +133,19 @@ mgr = TaskManager()
 _startup_cfg = load_config()
 mgr.semaphore.configure_sync(_startup_cfg.get("concurrency", 2),
                              _startup_cfg.get("max_concurrency", 5))
+# 增量补丁包：注入队列忙闲探针并启动空闲自动安装/重启守护
+updater_svc.set_idle_probe(lambda: mgr.semaphore.snapshot())
+updater_svc.start_daemon()
+
+# 重启恢复：若上次是「正在重启」状态，说明服务已成功拉起，收敛为完成
+try:
+    _upd_st = updater_svc._load_state()
+    if _upd_st.get("phase") == "restarting":
+        updater_svc._save_state({"phase": "done", "pending_restart": False,
+                                 "finished_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                                 "message": "应用已重启，更新生效"})
+except Exception:
+    pass
 
 # 仅管理员可修改的全局配置字段（普通用户只能保存自己的加工参数）
 # 注：output_dir / video_output_dir 已改为按用户「我的空间」目录名推导。
@@ -141,6 +155,7 @@ GLOBAL_ONLY_KEYS = {
     "port", "concurrency", "max_concurrency", "ffmpeg_path",
     "originality_enabled",
     "originality_k", "server", "ai", "preview_count", "update_check_cycle",
+    "update_install_mode", "update_auto_window",
     "developer_wechat", "developer_wechat_link",
     "space_quota_admin_gb", "space_quota_user_gb",
     "space_root", "output_dir", "video_output_dir",
@@ -459,6 +474,49 @@ def system_update_cycle(payload: dict = Body(default={})):
     try:
         return update_svc.set_cycle((payload or {}).get("cycle"))
     except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------- 增量补丁包：安装 / 重启 / 模式（写操作仅管理员） ----------------
+
+@app.get("/api/system/update-install-status")
+def update_install_status(request: Request):
+    """增量补丁包安装状态（只读，登录用户可见）。管理员额外拿到 is_admin 标记。"""
+    d = updater_svc.get_status()
+    d["is_admin"] = cu(request).get("role") == "admin"
+    if not d["is_admin"]:
+        d["can_install"] = False
+    return d
+
+
+@app.post("/api/admin/update-install-mode")
+def update_install_mode(payload: dict = Body(default={})):
+    """设置补丁安装方式（manual / auto）与自动重启时段（any / night）。"""
+    try:
+        return updater_svc.set_mode((payload or {}).get("mode"),
+                                   (payload or {}).get("window"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/admin/update-install")
+def update_install():
+    """手动安装：下载→校验→覆盖程序文件（不停服）；重启由空闲守护统一调度。"""
+    return updater_svc.install_async(actor="admin")
+
+
+@app.post("/api/admin/update-restart")
+def update_restart(payload: dict = Body(default={})):
+    """立即重启使补丁生效；有任务时拒绝并提示空闲后再试。"""
+    return updater_svc.request_restart(force=bool((payload or {}).get("force")))
+
+
+@app.post("/api/admin/update-rollback")
+def update_rollback():
+    """回滚到补丁安装前的程序文件（需重启生效）。"""
+    try:
+        return updater_svc.rollback()
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 

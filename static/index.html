@@ -843,6 +843,19 @@
   .up-new{margin-top:14px;border:1px solid #f3c0c2;background:#fff6f5;border-radius:12px;padding:13px 15px}
   .up-new h4{font-size:calc(13px * var(--fs));color:#c0392b;margin:0 0 6px}
   .up-new p{font-size:calc(11px * var(--fs));color:var(--ink);line-height:1.8;margin:0;white-space:pre-wrap}
+  /* 增量补丁包安装区 */
+  .up-install{margin-top:14px;border:1px solid #cfe2fb;background:linear-gradient(160deg,#f7fbff,#fff);
+    border-radius:12px;padding:14px 16px}
+  .up-ins-h{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:calc(13px * var(--fs));color:var(--ink)}
+  .up-ins-mode{font-size:calc(10px * var(--fs));font-weight:800;color:var(--blue);background:#eaf3ff;
+    border:1px solid #cfe2fb;border-radius:20px;padding:2px 9px}
+  .up-ins-state{font-size:calc(12px * var(--fs));color:var(--ink);line-height:1.8;margin-top:8px}
+  .up-ins-hint{font-size:calc(11px * var(--fs));color:#a56a12;background:#fff8e8;border:1px solid #f2e0bb;
+    border-radius:9px;padding:8px 11px;line-height:1.75;margin-top:8px}
+  .up-ins-err{font-size:calc(11px * var(--fs));color:#c0392b;background:#fff2f1;border:1px solid #f3c0c2;
+    border-radius:9px;padding:8px 11px;line-height:1.75;margin-top:8px;word-break:break-all}
+  .up-ins-acts{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px}
+  .up-ins-tip{font-size:calc(10px * var(--fs));color:var(--muted);line-height:1.7;margin-top:9px}
   .up-log{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:#fff;padding:14px 16px}
   .up-log-h{display:flex;align-items:center;gap:8px;font-size:calc(13px * var(--fs));font-weight:800;color:var(--blue);margin-bottom:10px}
   .up-log-item{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;padding:10px 0;border-top:1px dashed var(--line)}
@@ -2043,6 +2056,24 @@
         </div>
         <div class="hint" style="margin-top:4px">应用按此周期在后台核对是否有新版本，结果会缓存；选择「不检查」则不会自动联网核对。有新版本时左侧「系统更新」菜单会显示红色气泡，可在「关于应用 → 系统更新」查看版本状态与更新日志，或点「立即检查更新」手动核对。</div>
       </div>
+
+      <div style="border-top:1px dashed var(--line);margin-top:14px" id="upModeBox">
+        <label style="margin-top:12px">增量补丁包安装方式（仅管理员可修改）</label>
+        <div class="row" style="gap:8px;align-items:center">
+          <select id="update_install_mode" style="flex:1" onchange="saveUpdateInstallMode()">
+            <option value="manual">手动安装（检测到更新后由管理员点「安装更新」）</option>
+            <option value="auto">自动安装（检测到更新且队列空闲时自动安装）</option>
+          </select>
+        </div>
+        <label style="margin-top:10px">自动安装 / 重启时段</label>
+        <div class="row" style="gap:8px;align-items:center">
+          <select id="update_auto_window" style="flex:1" onchange="saveUpdateInstallMode()">
+            <option value="any">全天均可（队列空闲即执行）</option>
+            <option value="night">仅夜间 22:00–06:00</option>
+          </select>
+        </div>
+        <div class="hint" style="margin-top:4px">补丁只覆盖程序文件，安装过程不停服、不影响正在执行的任务。装好后应用会等任务队列清空（执行中与排队中都为 0）自动重启生效；若有任务在跑，会提示「请空闲时间再重启应用」并持续等待。</div>
+      </div>
       <button class="btn-gold" style="width:100%;margin-top:12px" onclick="saveConfig()">保存设置</button>
     </div>
 
@@ -2390,6 +2421,23 @@
       <div class="up-new" id="upNewBox" style="display:none">
         <h4>🎉 发现新版本 v<span id="upNewVer"></span><span id="upNewName"></span></h4>
         <p id="upNewNotes"></p>
+      </div>
+      <!-- 增量补丁包：安装更新（仅管理员可见） -->
+      <div class="up-install" id="upInstallBox" style="display:none">
+        <div class="up-ins-h">
+          <b>📦 增量补丁包安装</b>
+          <span class="up-ins-mode" id="upInsMode">手动安装</span>
+        </div>
+        <div class="up-ins-state" id="upInsState">正在读取安装状态…</div>
+        <div class="up-ins-hint" id="upInsHint" style="display:none"></div>
+        <div class="up-ins-err" id="upInsErr" style="display:none"></div>
+        <div class="up-ins-acts">
+          <button class="btn-gold btn-sm" type="button" id="upInstallBtn" onclick="doInstallUpdate()">⬇️ 安装更新</button>
+          <button class="btn-ghost btn-sm" type="button" id="upRestartBtn" onclick="doRestartUpdate()" style="display:none">🔁 立即重启生效</button>
+          <button class="btn-ghost btn-sm" type="button" id="upRollbackBtn" onclick="doRollbackUpdate()" style="display:none">↩️ 回滚</button>
+          <button class="btn-ghost btn-sm" type="button" onclick="switchTool('general')">安装方式设置</button>
+        </div>
+        <div class="up-ins-tip">安装只覆盖程序文件，不停止服务、不影响正在执行的任务；补丁装好后会在队列空闲时自动重启生效。</div>
       </div>
       <div class="ab-sec-t" style="margin-top:18px"><span class="ab-no">📜</span>功能更新日志 <small>按版本倒序 · 以本地发布记录为准</small></div>
       <div class="up-log" id="upLog"></div>
@@ -3195,7 +3243,7 @@ function activateTool(tool, fromMenu, skipPersist){
   applyToolVisibility(tool);
   if(tool==='ai') loadAiStatus();
   if(tool==='users') openUsersPanel();
-  if(tool==='update') loadUpdateStatus(false);
+  if(tool==='update'){ loadUpdateStatus(false); loadUpdateInstallStatus(); }
   if(fromMenu) focusWorkspace('panel');
   if(!skipPersist) saveLastView({kind:'tool', tool:tool, filter:(tool==='tasks'?(taskFilter||''):'')});
 }
@@ -5137,7 +5185,143 @@ async function loadUpdateStatus(force){
     if(btn){ btn.disabled=false; btn.innerHTML='🔄 立即检查更新'; }
   }
 }
-function checkUpdateNow(){ loadUpdateStatus(true); }
+function checkUpdateNow(){ loadUpdateStatus(true); loadUpdateInstallStatus(); }
+
+/* ---------- 增量补丁包：安装 / 重启 / 模式 ----------
+   安装只覆盖程序文件（不停服）；重启由后端空闲守护统一调度。
+   重启期间服务会短暂中断，前端轮询直到恢复并显示结果。 */
+let updInstallCache=null, updPolling=false, updRestartWatch=false, updRestartTries=0;
+
+function updSetText(id, txt){ const el=document.getElementById(id); if(el) el.textContent=txt; }
+function updShow(id, on){ const el=document.getElementById(id); if(el) el.style.display=on?'':'none'; }
+
+async function loadUpdateInstallStatus(){
+  try{
+    const r=await fetch('/api/system/update-install-status',{cache:'no-store'});
+    if(!r.ok){ if(r.status===403) updShow('upInstallBox',false); return; }
+    updInstallCache=await r.json();
+    renderUpdateInstall();
+  }catch(e){
+    // 服务重启期间会短暂断连：保留面板并继续轮询，让状态在恢复后自动刷新；
+    // 仅在从未成功加载过（如游客/未登录）时隐藏。
+    if(!updInstallCache) updShow('upInstallBox',false);
+  }
+}
+
+function renderUpdateInstall(){
+  const s=updInstallCache; if(!s) return;
+  const box=document.getElementById('upInstallBox');
+  if(box) box.style.display=s.is_admin?'':'none';
+  if(!s.is_admin) return;
+  updSetText('upInsMode', s.mode_label + ' · ' + s.window_label);
+  let line=s.phase_label||'';
+  if(s.message && s.message!==line) line += ' — ' + s.message;
+  if(s.pending_restart) line += '（执行中 '+s.active+' / 排队中 '+s.waiting+'）';
+  updSetText('upInsState', line);
+  updShow('upInsHint', !!s.hint);
+  if(s.hint) updSetText('upInsHint', '⏳ ' + s.hint);
+  updShow('upInsErr', !!s.error);
+  if(s.error) updSetText('upInsErr', '⚠️ ' + s.error);
+
+  const busyPhase=['downloading','verifying','applying','restarting'].includes(s.phase);
+  const btn=document.getElementById('upInstallBtn');
+  if(btn){
+    btn.disabled=busyPhase || !s.can_install;
+    btn.innerHTML=busyPhase?'<span class="up-spin"></span>处理中…':'⬇️ 安装更新';
+    btn.title=s.can_install?'':(s.has_update?'该版本未提供增量补丁包':'当前已是最新版本');
+  }
+  updShow('upRestartBtn', !!s.pending_restart && !s.busy && s.installed_layout!==false);
+  updShow('upRollbackBtn', !!s.rollback_available);
+
+  const selM=document.getElementById('update_install_mode');
+  const selW=document.getElementById('update_auto_window');
+  if(selM && document.activeElement!==selM) selM.value=s.mode;
+  if(selW && document.activeElement!==selW) selW.value=s.window;
+
+  // 安装进行中持续轮询；否则停止
+  if(busyPhase || s.pending_restart){ startUpdateInstallPolling(); }
+  else stopUpdateInstallPolling();
+}
+
+function startUpdateInstallPolling(){
+  if(updPolling) return;
+  updPolling=true;
+  const tick=async()=>{
+    if(!updPolling) return;
+    await loadUpdateInstallStatus();
+    if(updPolling) setTimeout(tick, 4000);
+  };
+  setTimeout(tick, 4000);
+}
+function stopUpdateInstallPolling(){ updPolling=false; }
+
+async function doInstallUpdate(){
+  if(!confirm('将下载并安装增量补丁包。安装过程不会停止服务、不影响正在执行的任务；补丁装好后会在任务队列空闲时自动重启生效。\n\n确定继续吗？')) return;
+  try{
+    const r=await fetch('/api/admin/update-install',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    toast(j.message||(j.ok?'已开始安装':'无法开始安装'), j.ok?'ok':'warning');
+    await loadUpdateInstallStatus();
+  }catch(e){ toast('请求失败，请稍后重试','warning'); }
+}
+
+async function doRestartUpdate(){
+  try{
+    const r=await fetch('/api/admin/update-restart',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    if(!j.ok){ toast(j.message||'暂时无法重启','warning'); await loadUpdateInstallStatus(); return; }
+    toast('应用正在重启，页面会自动检测恢复','ok');
+    watchRestartRecovery();
+  }catch(e){ toast('请求失败，请稍后重试','warning'); }
+}
+
+function watchRestartRecovery(){
+  if(updRestartWatch) return;
+  updRestartWatch=true; updRestartTries=0;
+  const tick=async()=>{
+    updRestartTries++;
+    try{
+      const r=await fetch('/api/system/update-status',{cache:'no-store'});
+      if(r.ok){
+        const v=await r.json();
+        updRestartWatch=false;
+        toast('应用已重启，当前版本 v'+v.current_version+'，更新已生效','ok');
+        await loadUpdateStatus(true);
+        await loadUpdateInstallStatus();
+        return;
+      }
+    }catch(e){ /* 服务重启中，继续等 */ }
+    if(updRestartTries>40){ updRestartWatch=false; toast('等待超时，请刷新页面确认更新结果','warning'); return; }
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 2500);
+}
+
+async function doRollbackUpdate(){
+  if(!confirm('将还原到补丁安装前的程序文件（需重启生效）。确定继续吗？')) return;
+  try{
+    const r=await fetch('/api/admin/update-rollback',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    toast(j.message||(r.ok?'已回滚':'回滚失败'), r.ok?'ok':'warning');
+    await loadUpdateInstallStatus();
+  }catch(e){ toast('请求失败，请稍后重试','warning'); }
+}
+
+async function saveUpdateInstallMode(){
+  const m=document.getElementById('update_install_mode'), w=document.getElementById('update_auto_window');
+  if(!m||!w) return;
+  try{
+    const r=await fetch('/api/admin/update-install-mode',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:m.value,window:w.value})});
+    if(!r.ok){ toast('保存失败（仅管理员可修改）','warning'); return; }
+    const j=await r.json();
+    if(updInstallCache){ updInstallCache.mode=j.mode; updInstallCache.mode_label=j.mode_label;
+      updInstallCache.window=j.window; updInstallCache.window_label=j.window_label;
+      renderUpdateInstall(); }
+    toast('更新安装方式已保存','ok');
+  }catch(e){ toast('请求失败，请稍后重试','warning'); }
+}
 
 /* ---------- 开发者微信：官方二维码图片 + 微信号两种方式（不再生成二维码） ----------
    微信加好友二维码本质是微信服务器签名的名片链接，第三方无法凭微信号反向生成；

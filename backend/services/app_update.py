@@ -1,4 +1,4 @@
-"""应用版本、功能更新日志与版本状态检查（正式版 1.0.0）。
+"""应用版本、功能更新日志与版本状态检查（正式版 1.0.0 基准包）。
 
 设计要点：
 - 版本真值只有一处：APP_VERSION；更新检查周期真值只有一处：全局配置
@@ -11,6 +11,8 @@
 - 公司/局域网常部署 HTTPS 中间人代理：浏览器装了企业根证书，Python 自带证书库不认，
   会报 CERTIFICATE_VERIFY_FAILED。_request() 按「标准库 → 系统 CA → 兼容模式」逐级回退，
   仅证书类错误才回退；该请求是只读公开版本信息、不发送任何凭据，兼容模式风险可控。
+- _urlopen_with_cert_fallback() 抽出公共请求逻辑，供版本信息（文本）与增量补丁包
+  （二进制）共用同一套证书兼容策略。
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
 APP_VERSION = "1.0.0"
-RELEASE_DATE = "2026-11-14"
+RELEASE_DATE = "2026-11-16"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -44,16 +46,18 @@ _TIMEOUT = 8.0          # 公司局域网经代理出网更慢，4 秒太紧
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.0-certfix-20261116"
+BUILD_TAG = "v1.0.0-base-20261116"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
     {
         "version": "1.0.0",
         "date": RELEASE_DATE,
-        "title": "正式版首个发布",
+        "title": "正式版首个发布（完整基准包）",
         "items": [
             "系统更新：内置局域网 HTTPS 代理证书兼容（默认 → 系统 CA → 兼容模式三级回退），公司网络也能正常核对版本",
+            "增量更新安装：管理员可在「系统更新」一键安装增量补丁包，支持手动 / 空闲自动两种模式；下载经 SHA256 双重校验、安装前自动备份、失败可回滚",
+            "空闲自动重启：补丁只覆盖程序文件不停服，任务队列清空后自动重启生效；有任务运行时给出友好提示并持续等待，不打断正在进行的工作",
             "图片处理：格式转换、裁切、缩放、去水印、图片加文字、Live 图提取，支持批量上传与并发队列",
             "文案生产：选题搭建 → 脚本创作 → 配音生成 → 封面制作 → 打包文案，五步完成一套素材",
             "视频创作：九步向导配置素材、封面、配音字幕、视频模板、背景乐、时长、转场与原创度校验",
@@ -141,29 +145,55 @@ def _ssl_strategies():
     yield "compat_no_verify", ssl._create_unverified_context()   # 最后兜底
 
 
-def _request(url: str, timeout: float = _TIMEOUT) -> str:
-    """请求公开版本信息；仅在证书链不受信时逐级降级，其它错误原样抛出。"""
-    global _LAST_SSL_MODE
-    req = urllib.request.Request(
+def _make_request(url: str, accept: str = "application/vnd.github+json, text/plain, */*"):
+    return urllib.request.Request(
         url,
         headers={
             "User-Agent": "LightFrame/" + APP_VERSION,
-            "Accept": "application/vnd.github+json, text/plain, */*",
+            "Accept": accept,
         },
     )
+
+
+def _urlopen_with_cert_fallback(req, timeout: float = _TIMEOUT):
+    """按证书策略逐级降级发起请求，返回 (response, mode)。
+
+    仅证书链不受信时降级；超时 / 404 / DNS 等原样抛出，避免无谓重试。
+    """
+    global _LAST_SSL_MODE
     cert_error = None
     for mode, ctx in _ssl_strategies():
         try:
-            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
-                text = r.read().decode("utf-8", "replace")
+            r = urllib.request.urlopen(req, timeout=timeout, context=ctx)
             _LAST_SSL_MODE = mode
-            return text
+            return r, mode
         except Exception as e:
             if _is_cert_error(e):
                 cert_error = e
                 continue                        # 换下一种证书策略重试
             raise                               # 超时 / 404 / DNS 等不做无谓重试
     raise CertVerifyError(str(cert_error) if cert_error else "证书校验失败")
+
+
+def _request(url: str, timeout: float = _TIMEOUT) -> str:
+    """请求公开版本信息（文本）；复用证书分级策略。"""
+    req = _make_request(url)
+    with _urlopen_with_cert_fallback(req, timeout) as (r, _mode):
+        return r.read().decode("utf-8", "replace")
+
+
+def _request_bytes(url: str, timeout: float = 60.0,
+                   max_bytes: int = 32 * 1024 * 1024) -> bytes:
+    """下载二进制（增量补丁包）；复用同一套证书分级策略，限制体积防内存打满。"""
+    req = _make_request(url, "application/octet-stream")
+    with _urlopen_with_cert_fallback(req, timeout) as (r, _mode):
+        declared = r.headers.get("Content-Length")
+        if declared and int(declared) > max_bytes:
+            raise RuntimeError("附件体积超过上限（%s 字节）" % declared)
+        data = r.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise RuntimeError("附件体积超过上限（%d 字节）" % max_bytes)
+    return data
 
 
 def _clean_version(s) -> str:
@@ -194,6 +224,20 @@ def _fetch_remote() -> dict:
         data = None
 
     if isinstance(data, dict) and data.get("tag_name"):
+        assets = []
+        for a in (data.get("assets") or []):
+            if not isinstance(a, dict):
+                continue
+            name = str(a.get("name") or "")
+            url = str(a.get("browser_download_url") or "")
+            if name and url:
+                assets.append({"name": name,
+                               "url": url,
+                               "size": int(a.get("size") or 0)})
+        patch = next((a for a in assets
+                      if a["name"].startswith("LightFrame_Patch_")
+                      and a["name"].lower().endswith(".zip")), None)
+        sums = next((a for a in assets if a["name"] == "SHA256SUMS.txt"), None)
         return {
             "latest_version": _clean_version(data.get("tag_name")),
             "release_name": str(data.get("name") or ""),
@@ -201,6 +245,9 @@ def _fetch_remote() -> dict:
             "published_at": str(data.get("published_at") or ""),
             "release_url": str(data.get("html_url") or ""),
             "source": "github_release",
+            "assets": assets,
+            "patch_asset": patch or {},
+            "checksum_asset": sums or {},
         }
 
     # 仓库还没建 Release 时，回退读取根目录 VERSION 纯文本
@@ -225,6 +272,9 @@ def _fetch_remote() -> dict:
         "published_at": "",
         "release_url": "",
         "source": "version_file",
+        "assets": [],
+        "patch_asset": {},
+        "checksum_asset": {},
     }
 
 
@@ -309,6 +359,8 @@ def get_status(force: bool = False) -> dict:
         "published_at": str(st.get("published_at") or ""),
         "release_url": str(st.get("release_url") or ""),
         "check_source": str(st.get("source") or ""),
+        "patch_asset": st.get("patch_asset") or {},
+        "checksum_asset": st.get("checksum_asset") or {},
         "no_release": no_release,
         "last_checked_at": str(st.get("last_checked_at") or ""),
         "next_check_at": next_check,

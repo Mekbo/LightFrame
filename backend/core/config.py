@@ -34,6 +34,10 @@ DEFAULTS = {
     "preview_count": 1,          # 任务成品随机预览数量（默认 1，范围 1–6）
     # 系统更新检查周期：week=1 周 / month=1 个月 / off=不检查（全局唯一真值，默认 1 周）
     "update_check_cycle": "week",
+    # 增量补丁包安装方式：manual=管理员手动点「安装更新」/ auto=空闲时自动安装（默认手动更安全）
+    "update_install_mode": "manual",
+    # 自动安装/重启时段：any=全天 / night=仅 22:00–06:00（默认全天）
+    "update_auto_window": "any",
     # 开发者微信：公开只读展示，仅管理员可写入 / 删除。
     # developer_wechat = 微信号（展示 / 复制用，纯文本二维码扫码后需手动搜索添加）；
     # developer_wechat_link = 微信「我的二维码」解码出的名片链接（u.wechat.com 等），
