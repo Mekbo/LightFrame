@@ -869,12 +869,21 @@
   .up-ins-tip{font-size:calc(10px * var(--fs));color:var(--muted);line-height:1.7;margin-top:9px}
   .up-log{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:#fff;padding:14px 16px}
   .up-log-h{display:flex;align-items:center;gap:8px;font-size:calc(13px * var(--fs));font-weight:800;color:var(--blue);margin-bottom:10px}
-  .up-log-item{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;padding:10px 0;border-top:1px dashed var(--line)}
-  .up-log-item:first-of-type{border-top:none;padding-top:0}
-  .up-log-v{font-size:calc(13px * var(--fs));font-weight:800;color:var(--ink)}
+  .up-log-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+  .up-log-bar button{background:none;border:none;cursor:pointer;color:var(--blue);font-size:calc(11px * var(--fs));padding:2px 0}
+  .up-log-bar button:hover{text-decoration:underline}
+  .up-log-item{border-top:1px dashed var(--line);padding:0}
+  .up-log-item:first-of-type{border-top:none}
+  .up-log-item>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:12px;padding:11px 2px;user-select:none}
+  .up-log-item>summary::-webkit-details-marker{display:none}
+  .up-log-item>summary:hover{background:#f7fbff}
+  .up-log-item>summary::after{content:'▾';margin-left:auto;color:var(--muted);transition:transform .2s;flex:none}
+  .up-log-item[open]>summary::after{transform:rotate(180deg)}
+  .up-log-v{font-size:calc(13px * var(--fs));font-weight:800;color:var(--ink);flex:none;min-width:96px}
   .up-log-v span{display:block;font-size:calc(10px * var(--fs));color:var(--muted);font-weight:500;margin-top:3px}
-  .up-log-b b{font-size:calc(12px * var(--fs));color:var(--ink)}
-  .up-log-b ul{padding-left:18px;margin:5px 0 0;font-size:calc(11px * var(--fs));color:var(--muted);line-height:1.8}
+  .up-log-title{font-size:calc(12px * var(--fs));color:var(--ink);font-weight:700}
+  .up-log-b{padding:0 2px 12px 108px}
+  .up-log-b ul{padding-left:18px;margin:2px 0 0;font-size:calc(11px * var(--fs));color:var(--muted);line-height:1.8}
   .up-repo{margin-top:12px;border:1px dashed #c9dcf7;background:#f7fbff;border-radius:12px;padding:12px 15px;
     font-size:calc(11px * var(--fs));color:var(--muted);line-height:1.8}
   .up-repo a{color:var(--blue);text-decoration:none;word-break:break-all;font-weight:700}
@@ -958,7 +967,7 @@
   }
   @media (max-width:600px){
     .ab-grid,.ab-steps,.up-kv,.dv-cards{grid-template-columns:1fr}
-    .up-log-item{grid-template-columns:1fr;gap:4px}
+    .up-log-b{padding-left:2px}
     .ab-hero .ab-ver{margin-left:0}
   }
 
@@ -2451,8 +2460,11 @@
         </div>
         <div class="up-ins-tip">安装只覆盖程序文件，不停止服务、不影响正在执行的任务；补丁装好后会在队列空闲时自动重启生效。</div>
       </div>
-      <div class="ab-sec-t" style="margin-top:18px"><span class="ab-no">📜</span>功能更新日志 <small>按版本倒序 · 以本地发布记录为准</small></div>
-      <div class="up-log" id="upLog"></div>
+      <div class="ab-sec-t" style="margin-top:18px"><span class="ab-no">📜</span>功能更新日志 <small>按版本倒序 · 点击版本展开详情</small></div>
+      <div class="up-log" id="upLogBox">
+        <div class="up-log-bar"><span>共 <b id="upLogCount">0</b> 个版本</span><button type="button" id="upLogToggleAll" onclick="toggleAllUpLogs()">展开全部</button></div>
+        <div id="upLog"></div>
+      </div>
       <!-- 开源仓库地址：仅管理员可见，链接由接口按角色下发，静态页不残留地址 -->
       <div class="up-repo" id="upRepoBox" style="display:none">
         <b>开源仓库（仅管理员可见）</b>：<a id="upRepoLink" href="#" target="_blank" rel="noopener noreferrer"></a><br>
@@ -5164,10 +5176,15 @@ function renderUpdateStatus(){
   }
   const log=document.getElementById('upLog');
   if(log){
-    log.innerHTML=(s.changelog||[]).map(v=>
-      '<div class="up-log-item"><div class="up-log-v">v'+escapeHtml(String(v.version))+'<span>'+escapeHtml(String(v.date))+'</span></div>'
-      +'<div class="up-log-b"><b>'+escapeHtml(String(v.title))+'</b><ul>'
-      +(v.items||[]).map(x=>'<li>'+escapeHtml(String(x))+'</li>').join('')+'</ul></div></div>').join('');
+    const list=(s.changelog||[]);
+    const cnt=document.getElementById('upLogCount'); if(cnt) cnt.textContent=list.length;
+    log.innerHTML=list.map(v=>
+      '<details class="up-log-item"><summary><span class="up-log-v">v'+escapeHtml(String(v.version))+'<span>'+escapeHtml(String(v.date))+'</span></span>'
+      +'<span class="up-log-title">'+escapeHtml(String(v.title))+'</span></summary>'
+      +'<div class="up-log-b"><ul>'
+      +(v.items||[]).map(x=>'<li>'+escapeHtml(String(x))+'</li>').join('')+'</ul></div></details>').join('');
+    log.querySelectorAll('details.up-log-item').forEach(d=>d.addEventListener('toggle',syncUpLogToggleBtn));
+    syncUpLogToggleBtn();
   }
   // 开源仓库地址仅管理员可见：非管理员连整块都不渲染，静态页与接口都不下发地址
   const repoBox=document.getElementById('upRepoBox');
@@ -5186,6 +5203,19 @@ function renderUpdateStatus(){
     cloneLink.href = cloneVisible ? s.repo_url : '#';
     cloneLink.textContent = cloneVisible ? s.repo_url : '';
   }
+}
+function syncUpLogToggleBtn(){
+  const btn=document.getElementById('upLogToggleAll'); if(!btn) return;
+  const items=document.querySelectorAll('#upLog details.up-log-item');
+  const allOpen=items.length>0 && Array.prototype.every.call(items,d=>d.open);
+  btn.textContent=allOpen?'收起全部':'展开全部';
+}
+function toggleAllUpLogs(){
+  const items=document.querySelectorAll('#upLog details.up-log-item');
+  if(!items.length) return;
+  const shouldOpen=!Array.prototype.every.call(items,d=>d.open);
+  Array.prototype.forEach.call(items,d=>{ d.open=shouldOpen; });
+  syncUpLogToggleBtn();
 }
 async function loadUpdateStatus(force){
   if(updateChecking) return;

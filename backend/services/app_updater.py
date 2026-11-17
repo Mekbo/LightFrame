@@ -329,6 +329,19 @@ def _fetch_patch():
     version = str(manifest.get("version") or "").lstrip("v")
     if version and version != str(ver.get("latest_version") or "").lstrip("v"):
         raise PatchError("补丁版本与 Release 版本不一致，已停止安装")
+    # 多基线防护：补丁 manifest 的 min_base 表示「构造该补丁时所用的最低基线版本」。
+    # 只有当前版本 >= min_base 才可以安全套用——补丁是整文件覆盖，若它从更高基线
+    # （例如全新安装包 1.5）构造、而用户还停在更低版本（1.0），套用会缺失中间变动导致
+    # 静默错乱。此处直接拒绝，引导用户下载完整安装包，而不是让残缺补丁装上去。
+    # 空值表示老补丁未声明基线，跳过校验以保持向后兼容。
+    min_base = str(manifest.get("min_base") or "").strip().lstrip("v")
+    if min_base:
+        current = str(A.APP_VERSION or "").strip().lstrip("v")
+        if current and A.is_newer(min_base, current):
+            raise PatchError(
+                "该补丁要求最低基线 v%s，而当前版本为 v%s，跨度过大无法安全升级；"
+                "请下载最新完整安装包重装（补丁只覆盖程序文件，无法补齐中间版本的变动）"
+                % (min_base, current))
     return name, manifest, files
 
 
