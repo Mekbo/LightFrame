@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.0"
 RELEASE_DATE = "2026-11-17"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
@@ -52,27 +52,20 @@ _NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.1-fontstyle-20261117"
+BUILD_TAG = "v1.0.0-full-20261117"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
     {
-        "version": "1.0.1",
+        "version": "1.0.0",
         "date": RELEASE_DATE,
-        "title": "字体样式与体验优化",
+        "title": "正式版首发（完整基准包）",
         "items": [
-            "文字模板 B/I/U：图片加文字与视频字幕/标题支持加粗、倾斜、下划线三种字体样式，Word 式开关，设置即时预览",
+            "字体样式 B/I/U：图片加文字与视频字幕/标题支持加粗、倾斜、下划线三种字体样式，Word 式开关，设置即时预览",
             "倾斜方向校正：斜体统一为标准右倾（/），符合常规排版预期",
             "文案模板默认居中：新建文字模板的默认垂直位置由 86% 调整为 50%（居中），视频字幕仍保持底部",
             "默认字体优化：字体列表只显示真实字体，默认字体置顶标注；历史模板旧字体名继续兼容",
             "配音试听优化：默认选中模型并加载角色，试听文案统一，打开即可试听",
-        ],
-    },
-    {
-        "version": "1.0.0",
-        "date": RELEASE_DATE,
-        "title": "正式版首个发布（完整基准包）",
-        "items": [
             "系统更新：内置局域网 HTTPS 代理证书兼容（默认 → 系统 CA → 兼容模式三级回退），公司网络也能正常核对版本",
             "增量更新安装：管理员可在「系统更新」一键安装增量补丁包，支持手动 / 空闲自动两种模式；下载经 SHA256 双重校验、安装前自动备份、失败可回滚",
             "空闲自动重启：补丁只覆盖程序文件不停服，任务队列清空后自动重启生效；有任务运行时给出友好提示并持续等待，不打断正在进行的工作",
