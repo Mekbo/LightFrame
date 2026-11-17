@@ -9,8 +9,12 @@
     "font": "仓耳与墨W04",
     "color": "#ffffff",
     "weight": 400,
+    "bold": false,
+    "italic": false,
+    "underline": false,
     "stroke": {
-      "width": 0
+      "width": 2,
+      "color": "#000000"
     },
     "shadow": {
       "width": 3,
@@ -25,7 +29,7 @@
     },
     "anchor": "center",
     "size_ratio": 0.03,
-    "stroke_ratio": 0.0,
+    "stroke_ratio": 0.00125,
     "shadow_ratio": 0.001875,
     "max_width_ratio": 0.86,
     "line_spacing": 1.25
@@ -34,7 +38,10 @@
     "spec": "9:16",
     "font": "仓耳与墨W03",
     "color": "#fdee26",
-    "weight": 700,
+    "weight": 400,
+    "bold": false,
+    "italic": false,
+    "underline": false,
     "stroke": {
       "width": 4,
       "color": "#3a2410"

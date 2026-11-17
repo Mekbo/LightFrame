@@ -1,4 +1,4 @@
-"""应用版本、功能更新日志与版本状态检查（正式版 1.0.0 基准包）。
+"""应用版本、功能更新日志与版本状态检查。
 
 设计要点：
 - 版本真值只有一处：APP_VERSION；更新检查周期真值只有一处：全局配置
@@ -31,8 +31,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.0"
-RELEASE_DATE = "2026-11-16"
+APP_VERSION = "1.0.1"
+RELEASE_DATE = "2026-11-17"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -52,10 +52,22 @@ _NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.0-netretry-20261116"
+BUILD_TAG = "v1.0.1-fontstyle-20261117"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
+    {
+        "version": "1.0.1",
+        "date": RELEASE_DATE,
+        "title": "字体样式与体验优化",
+        "items": [
+            "文字模板 B/I/U：图片加文字与视频字幕/标题支持加粗、倾斜、下划线三种字体样式，Word 式开关，设置即时预览",
+            "倾斜方向校正：斜体统一为标准右倾（/），符合常规排版预期",
+            "文案模板默认居中：新建文字模板的默认垂直位置由 86% 调整为 50%（居中），视频字幕仍保持底部",
+            "默认字体优化：字体列表只显示真实字体，默认字体置顶标注；历史模板旧字体名继续兼容",
+            "配音试听优化：默认选中模型并加载角色，试听文案统一，打开即可试听",
+        ],
+    },
     {
         "version": "1.0.0",
         "date": RELEASE_DATE,

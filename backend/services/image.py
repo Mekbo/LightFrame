@@ -139,12 +139,78 @@ def _legacy_style(tc: dict) -> dict:
     }
 
 
+def _paint_line(layer, x, y, line, font, fill, *, font_size, stroke_w=0,
+                stroke_color=None, bold=False, italic=False, underline=False,
+                ascent=0):
+    """在 layer 的 (x, y) 处绘制一行文字，应用 B/I/U 字体样式。
+
+    - 加粗 B：同色描边撑大字形（伪粗体，跨字体有效，不依赖字库 Bold 变体）；
+    - 倾斜 I：把单行画到临时透明图后做水平错切（shear）再贴回，模拟斜体；
+    - 下划线 U：在该行基线下画一条与文字同色的横线。
+    阴影层与文字层都走这里，保证 B/I/U 在两层上一致。
+    """
+    draw = ImageDraw.Draw(layer)
+    bold_px = max(1, int(round(font_size * 0.09))) if bold else 0
+    ul_w = max(2, int(round(font_size * 0.05)))
+    ul_gap = max(2, int(round(font_size * 0.03)))
+    shear = 0.38                      # 斜体倾斜系数（放大到肉眼明显）
+
+    def paint(d, px, py):
+        # 加粗：先铺一层同色描边撑大字形
+        if bold_px:
+            d.text((px, py), line, font=font, fill=fill,
+                   stroke_width=bold_px, stroke_fill=fill)
+        # 用户描边（在加粗之外）
+        if stroke_w:
+            d.text((px, py), line, font=font, fill=fill,
+                   stroke_width=stroke_w, stroke_fill=stroke_color)
+        elif not bold_px:
+            d.text((px, py), line, font=font, fill=fill)
+        # 下划线
+        if underline:
+            tw = d.textlength(line, font=font)
+            uy = py + ascent + ul_gap
+            d.line([(px, uy), (px + tw, uy)], fill=fill, width=ul_w)
+
+    if not italic:
+        paint(draw, x, y)
+        return
+
+    # 斜体：单行临时图 + 水平错切后合成回主层（锚点跟随该行，避免整体位移）
+    try:
+        tw = int(draw.textlength(line, font=font))
+    except Exception:
+        tw = int(font_size * max(1, len(line)) * 0.9)
+    pad = max(4, (stroke_w or 0) + bold_px + ul_w + 2)
+    tmp_w = max(1, tw + pad * 2)
+    tmp_h = max(1, font_size + pad * 2 + ul_gap + ul_w)
+    tmp = Image.new("RGBA", (tmp_w, tmp_h), (0, 0, 0, 0))
+    paint(ImageDraw.Draw(tmp), pad, pad)
+    # 标准右斜体：顶部右移、底部左移（字形 /）。
+    # AFFINE 逆映射矩阵取 (1, shear, -shear*anchor_y, 0, 1, 0)，
+    # 使 dest_x = X - shear*(Y-anchor_y)：Y 越小（越靠顶部）右移越多。
+    anchor_y = tmp_h / 2.0
+    sheared = tmp.transform(
+        (tmp_w, tmp_h), Image.AFFINE,
+        (1, shear, -shear * anchor_y, 0, 1, 0),
+        resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
+    dx, dy = int(x - pad), int(y - pad)
+    # 斜体错切后可能越出画幅，裁剪到 layer 范围内再合成，避免贴回报错
+    left, top = max(0, dx), max(0, dy)
+    right = min(layer.width, dx + sheared.width)
+    bottom = min(layer.height, dy + sheared.height)
+    if right > left and bottom > top:
+        crop = sheared.crop((left - dx, top - dy, right - dx, bottom - dy))
+        layer.alpha_composite(crop, (left, top))
+
+
 def _draw_text_layers(W: int, H: int, style: dict, content: str):
     """按模板样式绘制两张透明 RGBA 图层：(阴影层或 None, 主文字层)。
 
     图片加文字与视频硬字幕共用此逻辑，保证同一套模板在两种产物里效果完全一致。
     位置用归一化坐标（pos.x/pos.y 为宽/高比例），字号 = 高度 * size_ratio，
     描边/阴影 = 高度 * ratio（width<=0 时禁用，否则下限 1px）。不绘制字体背景。
+    字体样式 B/I/U（bold/italic/underline）由 _paint_line 统一处理。
     """
     if style.get("_legacy_size_px"):
         # 旧配置：用绝对字号，直接按高度比例换算以保持近似
@@ -156,17 +222,29 @@ def _draw_text_layers(W: int, H: int, style: dict, content: str):
 
     opacity = max(0.1, min(1.0, float(style.get("opacity", 1.0))))
     anchor = style.get("anchor", "center")
-    pos = style.get("pos", {"x": 0.5, "y": 0.86})
+    pos = style.get("pos", {"x": 0.5, "y": 0.5})
     cx = pos.get("x", 0.5) * W
     y0 = pos.get("y", 0.86) * H
     max_w = W * float(style.get("max_width_ratio", 0.9))
     line_spacing = float(style.get("line_spacing", 1.2))
+
+    # 字体样式：新字段优先，兼容老模板 weight>=700 → 加粗
+    weight_num = None
+    try:
+        weight_num = int(style.get("weight"))
+    except (TypeError, ValueError):
+        pass
+    bold = bool(style.get("bold", weight_num is not None and weight_num >= 700))
+    italic = bool(style.get("italic", False))
+    underline = bool(style.get("underline", False))
 
     lines = _wrap_text(content, font, max_w)
     try:
         ascent, descent = font.getmetrics()
         lh = int((ascent + descent) * line_spacing)
     except Exception:
+        ascent = int(font_size * 0.8)
+        descent = int(font_size * 0.2)
         lh = int(font_size * 1.3 * line_spacing)
     # 多行时上下行间距整体收紧 3px（字幕 / 顶部标题 / 图片加文字共用，仅多行时有效）；
     # 用字号下限兜底，避免行距过小导致文字重叠。
@@ -178,12 +256,14 @@ def _draw_text_layers(W: int, H: int, style: dict, content: str):
         sh_off = max(1, int(H * float(style.get("shadow_ratio", 0.0025))))
         sh_blur = max(1, int(H * float(style.get("shadow_ratio", 0.0025)) * 1.5))
         shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        sd = ImageDraw.Draw(shadow_layer)
         sh_color = _hex_to_rgba(shadow.get("color", "#000000"), int(255 * opacity))
+        sd = ImageDraw.Draw(shadow_layer)
         for i, line in enumerate(lines):
             tw = sd.textlength(line, font=font)
             x = _anchor_x(anchor, cx, tw)
-            sd.text((x + sh_off, y0 + i * lh + sh_off), line, font=font, fill=sh_color)
+            _paint_line(shadow_layer, x + sh_off, y0 + i * lh + sh_off, line, font,
+                        sh_color, font_size=font_size, bold=bold, italic=italic,
+                        underline=underline, ascent=ascent)
         shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(sh_blur))
     else:
         shadow_layer = None
@@ -198,8 +278,9 @@ def _draw_text_layers(W: int, H: int, style: dict, content: str):
     for i, line in enumerate(lines):
         tw = md.textlength(line, font=font)
         x = _anchor_x(anchor, cx, tw)
-        md.text((x, y0 + i * lh), line, font=font, fill=text_color,
-                stroke_width=stroke_w, stroke_fill=stroke_color)
+        _paint_line(main_layer, x, y0 + i * lh, line, font, text_color,
+                    font_size=font_size, stroke_w=stroke_w, stroke_color=stroke_color,
+                    bold=bold, italic=italic, underline=underline, ascent=ascent)
     return shadow_layer, main_layer
 
 

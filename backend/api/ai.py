@@ -1266,7 +1266,7 @@ async def ai_tts_voice_audio(request: Request, body: dict = None):
     model = (b.get("model") or "").strip()
     voice = (b.get("voice") or "").strip()
     key = (b.get("api_key") or "").strip()
-    text = (b.get("text") or "你好，这是配音角色的试听效果。").strip()[:80]
+    text = (b.get("text") or "别急，你看——雨停了，风里有青草香，我们出发吧！").strip()[:80]
     if not key:
         return ai_result(False, error={"code": "NO_CREDENTIAL", "message": "请先填写 API Key"})
     try:

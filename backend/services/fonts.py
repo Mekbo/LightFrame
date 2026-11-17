@@ -128,21 +128,27 @@ def suggest_default() -> str:
 
 
 def list_fonts() -> list:
-    """前端下拉列表：应用字体优先，系统字体仅在应用目录为空时兜底出现。
+    """前端下拉列表：只列真实字体文件，默认项标注「（默认字体）」。
 
-    首项为兼容别名「思源黑体」（指向默认字体），其后列出全部真实字体名；
-    历史模板里保存的系统字体名由 resolve_path 回退到默认字体，不会报错。
+    体验优化 2026-11-17：去掉过去插在首位的兼容别名「思源黑体（默认 · Xxx）」。
+    该别名与真实默认字体在下拉里是两个选项（值不同：一个是「思源黑体」，一个是
+    「SourceHanSansHW-Bold」），用户容易困惑选错。现在下拉里只保留真实字体名，
+    默认那款标注「（默认字体）」并置顶选中；历史模板里保存的旧别名「思源黑体」
+    仍由 resolve_path 回退到默认字体，渲染不受影响（向后兼容保留）。
     """
     reg = registry()
     default = suggest_default()
     out = []
-    if default:
-        out.append({"name": DEFAULT_ALIAS, "path": reg[default],
-                    "is_default": True, "source": "app",
-                    "label": f"{DEFAULT_ALIAS}（默认 · {default}）"})
+    # 默认字体置顶（仅真实字体名，不再插入「思源黑体」别名项）
+    if default and default in reg:
+        out.append({"name": default, "path": reg[default],
+                    "is_default": True, "source": "app" if _is_app_font(reg[default]) else "system",
+                    "label": default + "（默认字体）"})
     for name, path in sorted(reg.items()):
+        if name == default:          # 已在上面置顶，避免重复
+            continue
         is_app = _is_app_font(path)
-        label = name + ("（默认字体）" if name == default else "")
+        label = name
         if not is_app:
             label += "（系统兜底）"
         out.append({"name": name, "path": path, "is_default": False,

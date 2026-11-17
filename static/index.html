@@ -367,6 +367,17 @@
   .vt-group label{margin-top:5px}
   .vt-group .pair{display:flex;gap:6px;align-items:center;font-size:calc(11px * var(--fs));color:var(--muted)}
 
+  /* 字体样式 B / I / U 切换按钮（图片模板 + 视频模板共用，Word 式开关） */
+  .fs-btn-row{display:flex;gap:5px;align-items:center}
+  .fs-btn{width:34px;height:30px;border:1px solid var(--line);background:#fff;color:var(--ink);
+    border-radius:7px;font-size:calc(14px * var(--fs));line-height:1;display:flex;align-items:center;justify-content:center;
+    transition:.12s;user-select:none;padding:0}
+  .fs-btn:hover{border-color:var(--blue);color:var(--blue)}
+  .fs-b.on{font-weight:900}
+  .fs-i.on{font-style:italic}
+  .fs-u.on{text-decoration:underline}
+  .fs-btn.on{background:var(--blue);border-color:var(--blue);color:#fff}
+
   .task{border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-bottom:8px;background:#fff}
   .task-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;white-space:nowrap;font-size:calc(12px * var(--fs))}
   .task .sel{width:15px;height:15px;accent-color:var(--blue);cursor:pointer;flex:none}
@@ -1222,11 +1233,12 @@
             </div>
             <div class="row">
               <div><label>文字颜色</label><input type="color" id="tpl_color" value="#FFFFFF" class="color-input"></div>
-              <div><label>字体粗细</label>
-                <select id="tpl_weight">
-                  <option value="300">细</option><option value="400" selected>常规</option>
-                  <option value="500">中粗</option><option value="700">粗</option><option value="900">特粗</option>
-                </select>
+              <div><label>字体样式</label>
+                <div class="fs-btn-row">
+                  <button type="button" class="fs-btn fs-b" id="tpl_bold" title="加粗" onclick="toggleFsBtn('tpl_bold')">B</button>
+                  <button type="button" class="fs-btn fs-i" id="tpl_italic" title="倾斜" onclick="toggleFsBtn('tpl_italic')">I</button>
+                  <button type="button" class="fs-btn fs-u" id="tpl_underline" title="下划线" onclick="toggleFsBtn('tpl_underline')">U</button>
+                </div>
               </div>
             </div>
             <div class="row">
@@ -2287,7 +2299,7 @@
           <h3>光影工坊工作台</h3>
           <p>一套本地运行的图片处理、文案生产与视频创作工作台。左侧按场景分组，选中功能后在中间面板设置参数、添加素材、提交任务，进度与产物统一在「任务管理」查看。</p>
         </div>
-        <div class="ab-ver">正式版 v1.0.0</div>
+        <div class="ab-ver">正式版 v1.0.1</div>
       </div>
 
       <!-- 本地服务信息：只在使用指南里展示，游客不可见 -->
@@ -2399,8 +2411,8 @@
       <div class="up-top">
         <div class="up-ver">
           <div class="up-cap">CURRENT VERSION · 当前版本</div>
-          <div class="up-vnum">v<span id="upCurVer">1.0.0</span><small>正式版</small></div>
-          <div class="up-vsub">发布日期 <span id="upRelDate">2026-11-14</span><br>光影工坊工作台 · 本地运行</div>
+          <div class="up-vnum">v<span id="upCurVer">1.0.1</span><small>正式版</small></div>
+          <div class="up-vsub">发布日期 <span id="upRelDate">2026-11-17</span><br>光影工坊工作台 · 本地运行</div>
         </div>
         <div class="up-state">
           <div class="up-state-h"><h4>版本状态</h4><span class="up-pill unknown" id="upPill">正在读取…</span></div>
@@ -4126,7 +4138,7 @@ function vtStyleFields(p,label){
   return '<fieldset class="vt-group"><legend>'+label+'</legend>'
     +'<div class="row"><div><label>字体</label><select id="'+id('font')+'" class="vt-font"></select></div>'
     +'<div><label>文字颜色</label><input type="color" id="'+id('color')+'" class="color-input"></div></div>'
-    +'<div class="row"><div><label>字体粗细</label><select id="'+id('weight')+'"><option value="300">细</option><option value="400">常规</option><option value="500">中粗</option><option value="700">粗</option><option value="900">特粗</option></select></div>'
+    +'<div class="row"><div><label>字体样式</label>'+fsButtons('vt_'+p)+'</div>'
     +'<div><label>对齐方式</label><select id="'+id('anchor')+'"><option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option></select></div></div>'
     +'<label>字号（占画面高度 <span class="val" id="'+id('size_val')+'">4%</span>）</label>'
     +'<input type="range" id="'+id('size')+'" min="2" max="15" step="0.5" value="4" class="rng">'
@@ -4141,12 +4153,13 @@ function vtStyleFields(p,label){
     +'</fieldset>';
 }
 function vtDefaults(p){
+  const defFont=defaultFontName()||'系统默认';
   return p==='sub'
-    ? {font:'思源黑体',color:'#FFFFFF',weight:'700',anchor:'center',size:4,x:50,y:86,stroke:2,stroke_color:'#000000',shadow:0,shadow_color:'#000000',opacity:100}
-    : {font:'思源黑体',color:'#FFD700',weight:'900',anchor:'center',size:6,x:50,y:7,stroke:2,stroke_color:'#3A2410',shadow:0,shadow_color:'#000000',opacity:100};
+    ? {font:defFont,color:'#FFFFFF',bold:false,italic:false,underline:false,weight:'400',anchor:'center',size:4,x:50,y:86,stroke:2,stroke_color:'#000000',shadow:0,shadow_color:'#000000',opacity:100}
+    : {font:defFont,color:'#FFD700',bold:false,italic:false,underline:false,weight:'400',anchor:'center',size:6,x:50,y:7,stroke:2,stroke_color:'#3A2410',shadow:0,shadow_color:'#000000',opacity:100};
 }
 function fillVtFonts(){
-  const opts=FONTS.length?FONTS:[{name:'思源黑体',label:'思源黑体（默认）',is_default:true}];
+  const opts=FONTS.length?FONTS:[{name:defaultFontName()||'系统默认',label:(defaultFontName()||'系统默认')+'（默认字体）',is_default:true}];
   document.querySelectorAll('.vt-font').forEach(sel=>{
     const cur=sel.value;
     sel.innerHTML=opts.map(f=>'<option value="'+escapeHtml(f.name)+'" '+(f.is_default?'selected':'')+'>'+escapeHtml(f.label||f.name)+'</option>').join('');
@@ -4164,6 +4177,10 @@ function buildVtStyleFields(){
       const m=(e.target.id||'').match(/^vt_(sub|title)_/);
       if(m){ syncVtLabels(m[1]); scheduleVtPreview(); }
     }));
+    // 字体样式 B/I/U 按钮只切换 class、不触发 input/change，需单独监听 click 才能刷新预览
+    el.addEventListener('click',e=>{
+      if(/^vt_(sub|title)_(bold|italic|underline)$/.test(e.target.id||'')) scheduleVtPreview();
+    });
   }
 }
 function vtG(p,k){ const el=document.getElementById('vt_'+p+'_'+k); return el?el.value:''; }
@@ -4175,7 +4192,7 @@ function syncVtLabels(p){
 }
 function fillVtStyle(p,s){
   const d=vtDefaults(p); s=s||{};
-  const m={font:s.font||d.font,color:normHex(s.color||d.color),weight:String(s.weight||d.weight),
+  const m={font:s.font||d.font,color:normHex(s.color||d.color),
     anchor:s.anchor||d.anchor,
     size:Math.round(((s.size_ratio)||(d.size/100))*200)/2,
     x:Math.round(((s.pos&&s.pos.x!=null)?s.pos.x:d.x/100)*100),
@@ -4186,12 +4203,15 @@ function fillVtStyle(p,s){
     shadow_color:normHex((s.shadow&&s.shadow.color)||d.shadow_color),
     opacity:Math.round((s.opacity||1)*100)};
   Object.keys(m).forEach(k=>vtS(p,k,m[k]));
+  const fs=fsFromStyle(Object.assign({},d,s)); setFsBtns('vt_'+p, fs.bold, fs.italic, fs.underline);
   syncVtLabels(p);
 }
 function collectVtStyle(p){
   const strokeW=parseInt(vtG(p,'stroke'),10)||0, shadowW=parseInt(vtG(p,'shadow'),10)||0;
+  const bold=fsOn('vt_'+p,'bold'), italic=fsOn('vt_'+p,'italic'), underline=fsOn('vt_'+p,'underline');
   return {
-    font:vtG(p,'font'), color:vtG(p,'color'), weight:parseInt(vtG(p,'weight'),10)||400,
+    font:vtG(p,'font'), color:vtG(p,'color'), bold:bold, italic:italic, underline:underline,
+    weight:bold?700:400,
     stroke:strokeW<=0?{width:0}:{width:strokeW,color:vtG(p,'stroke_color')},
     shadow:shadowW<=0?{width:0}:{width:shadowW,color:vtG(p,'shadow_color'),blur:Math.max(1,Math.round(shadowW*1.5))},
     opacity:(parseInt(vtG(p,'opacity'),10)||100)/100,
@@ -4664,7 +4684,7 @@ async function previewMatVoice(){
   toast('正在合成试听…','info');
   try{
     const r=await fetch('/api/ai/tts',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model_id:mid, voice_id:vid, text:'今天天气不错，我们聊聊这块XX木纹砖的质感。'})});
+      body:JSON.stringify({model_id:mid, voice_id:vid, text:'别急，你看——雨停了，风里有青草香，我们出发吧！'})});
     const ct=r.headers.get('content-type')||'';
     if(!r.ok||ct.includes('application/json')){
       const j=await r.json().catch(()=>({}));
@@ -6320,6 +6340,38 @@ if('Notification' in window && Notification.permission==='default'){
 /* ---------- 图片加文字：字体 / 模板 / 预览 ---------- */
 let FONTS = [];
 let editingTplId = null;
+// 当前默认字体名：优先取后端标记的 is_default 项，否则取第一项（不再硬编码「思源黑体」）
+function defaultFontName(){
+  const def=(FONTS||[]).find(f=>f.is_default);
+  return (def&&def.name) || ((FONTS&&FONTS[0])&&FONTS[0].name) || '';
+}
+
+/* ---- 字体样式 B/I/U 切换按钮（图片模板 + 视频模板共用，Word 式开关） ---- */
+// 生成三个按钮的 HTML（prefix 为 id 前缀，如 'tpl' 或 'vt_sub'）
+function fsButtons(prefix){
+  return '<div class="fs-btn-row">'
+    +'<button type="button" class="fs-btn fs-b" id="'+prefix+'_bold" title="加粗" onclick="toggleFsBtn(\''+prefix+'_bold\')">B</button>'
+    +'<button type="button" class="fs-btn fs-i" id="'+prefix+'_italic" title="倾斜" onclick="toggleFsBtn(\''+prefix+'_italic\')">I</button>'
+    +'<button type="button" class="fs-btn fs-u" id="'+prefix+'_underline" title="下划线" onclick="toggleFsBtn(\''+prefix+'_underline\')">U</button>'
+    +'</div>';
+}
+function toggleFsBtn(id){ const el=document.getElementById(id); if(el) el.classList.toggle('on'); }
+function setFsBtns(prefix, bold, italic, underline){
+  const set=(k,on)=>{ const el=document.getElementById(prefix+'_'+k); if(el) el.classList.toggle('on', !!on); };
+  set('bold',bold); set('italic',italic); set('underline',underline);
+}
+function fsOn(prefix,k){ const el=document.getElementById(prefix+'_'+k); return !!(el&&el.classList.contains('on')); }
+// 由样式对象推导 B/I/U：新字段优先；兼容旧模板 weight>=700 → bold
+function fsFromStyle(s){
+  s=s||{};
+  const legacyBold = (s.bold===undefined && s.italic===undefined && s.underline===undefined)
+    ? (parseInt(s.weight,10)>=700) : false;
+  return {
+    bold: s.bold!==undefined ? !!s.bold : legacyBold,
+    italic: !!s.italic,
+    underline: !!s.underline,
+  };
+}
 
 async function loadFonts(force){
   try{
@@ -6351,7 +6403,7 @@ function fillFontOptions(){
   const sel=document.getElementById('tpl_font');
   if(!sel) return;
   const cur=sel.value;
-  const opts=FONTS.length?FONTS:[{name:'思源黑体',label:'思源黑体（默认）',is_default:true}];
+  const opts=FONTS.length?FONTS:[{name:defaultFontName()||'系统默认',label:(defaultFontName()||'系统默认')+'（默认字体）',is_default:true}];
   sel.innerHTML = opts.map(f=>`<option value="${escapeHtml(f.name)}" ${f.is_default?'selected':''}>${escapeHtml(f.label||f.name)}</option>`).join('');
   if(cur && opts.some(f=>f.name===cur)) sel.value=cur;
 }
@@ -6365,9 +6417,9 @@ async function openCreator(tpl){
   const s = tpl ? (tpl.style||{}) : {};
   document.getElementById('tpl_name').value = tpl ? (tpl.name||'') : '';
   document.getElementById('tpl_spec').value = s.spec||'9:16';
-  document.getElementById('tpl_font').value = s.font||'思源黑体';
+  document.getElementById('tpl_font').value = s.font||defaultFontName();
   document.getElementById('tpl_color').value = normHex(s.color||'#FFFFFF');
-  document.getElementById('tpl_weight').value = String(s.weight||400);
+  const _fs=fsFromStyle(s); setFsBtns('tpl', _fs.bold, _fs.italic, _fs.underline);
   document.getElementById('tpl_stroke').value = (s.stroke&&s.stroke.width)||0;
   document.getElementById('tpl_stroke_color').value = normHex(s.stroke&&s.stroke.color||'#000000');
   document.getElementById('tpl_shadow').value = (s.shadow&&s.shadow.width)||0;
@@ -6375,7 +6427,7 @@ async function openCreator(tpl){
   document.getElementById('tpl_opacity').value = Math.round((s.opacity||1)*100);
   document.getElementById('tpl_size').value = Math.round((s.size_ratio||0.06)*100);
   document.getElementById('tpl_x').value = Math.round(((s.pos&&s.pos.x!=null)?s.pos.x:0.5)*100);
-  document.getElementById('tpl_y').value = Math.round(((s.pos&&s.pos.y!=null)?s.pos.y:0.86)*100);
+  document.getElementById('tpl_y').value = Math.round(((s.pos&&s.pos.y!=null)?s.pos.y:0.5)*100);
   document.getElementById('tpl_anchor').value = s.anchor||'center';
   const sh=document.getElementById('tpl_shared'); if(sh) sh.checked = tpl ? !!tpl.shared : false;
   syncCreatorLabels();
@@ -7006,15 +7058,17 @@ function ptplUseEditTemplate(){
 }
 function collectStyle(){
   const g=id=>document.getElementById(id);
+  const bold=fsOn('tpl','bold'), italic=fsOn('tpl','italic'), underline=fsOn('tpl','underline');
   return {
     spec:g('tpl_spec').value,
     font:g('tpl_font').value,
     color:g('tpl_color').value,
-    weight:parseInt(g('tpl_weight').value)||400,
+    bold:bold, italic:italic, underline:underline,
+    weight:bold?700:400,
     stroke:(()=>{const w=parseInt(g('tpl_stroke').value)||0; return w<=0?{width:0}:{width:w,color:g('tpl_stroke_color').value};})(),
     shadow:(()=>{const w=parseInt(g('tpl_shadow').value)||0; return w<=0?{width:0}:{width:w,color:g('tpl_shadow_color').value,blur:Math.max(1,Math.round(w*1.5))};})(),
     opacity:(parseInt(g('tpl_opacity').value)||100)/100,
-    pos:{x:(parseInt(g('tpl_x').value)||50)/100, y:(parseInt(g('tpl_y').value)||86)/100},
+    pos:{x:(parseInt(g('tpl_x').value)||50)/100, y:(parseInt(g('tpl_y').value)||50)/100},
     anchor:g('tpl_anchor').value,
     size_ratio:(parseInt(g('tpl_size').value)||6)/100,
   };
@@ -7023,7 +7077,7 @@ function syncCreatorLabels(){
   document.getElementById('tpl_op_val').textContent = (document.getElementById('tpl_opacity').value||100)+'%';
   document.getElementById('tpl_size_val').textContent = (document.getElementById('tpl_size').value||6)+'%';
   document.getElementById('tpl_x_val').textContent = (document.getElementById('tpl_x').value||50)+'%';
-  document.getElementById('tpl_y_val').textContent = (document.getElementById('tpl_y').value||86)+'%';
+  document.getElementById('tpl_y_val').textContent = (document.getElementById('tpl_y').value||50)+'%';
 }
 let previewTimer=null;
 /* 预览列共用：底纹切换 + 规格提示 */
@@ -7106,10 +7160,15 @@ function initTextPanel(){
   });
   document.getElementById('tpl_cancel').addEventListener('click',()=>{ tcCloseEditor('tx_creator'); });
   document.getElementById('tpl_save').addEventListener('click', saveTextTemplate);
-  ['tpl_spec','tpl_font','tpl_color','tpl_weight','tpl_stroke','tpl_stroke_color','tpl_shadow','tpl_shadow_color','tpl_opacity','tpl_size','tpl_x','tpl_y','tpl_anchor','tpl_bg'].forEach(id=>{
+  ['tpl_spec','tpl_font','tpl_color','tpl_stroke','tpl_stroke_color','tpl_shadow','tpl_shadow_color','tpl_opacity','tpl_size','tpl_x','tpl_y','tpl_anchor','tpl_bg'].forEach(id=>{
     const el=document.getElementById(id); if(!el) return;
     el.addEventListener('input',()=>{ syncCreatorLabels(); schedulePreview(); });
     el.addEventListener('change',()=>{ syncCreatorLabels(); schedulePreview(); });
+  });
+  // 字体样式 B/I/U 按钮：切换后刷新预览
+  ['tpl_bold','tpl_italic','tpl_underline'].forEach(id=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.addEventListener('click',()=>{ schedulePreview(); });
   });
   document.getElementById('tx_template').addEventListener('change', updateEnabledSummary);
   // 文案：输入即存本地，刷新不丢
@@ -7486,7 +7545,18 @@ async function populateAiModelSelectors(){
     // 文案生产：选题 / 脚本用文本模型，配音用 TTS 模型
     fillSelect('mat_topic_model', (t.data&&t.data.models)||[], null);
     fillSelect('mat_script_model', (t.data&&t.data.models)||[], null);
-    fillSelect('mat_tts_model', (ts.data&&ts.data.models)||[], null);
+    const ttsModels=(ts.data&&ts.data.models)||[];
+    fillSelect('mat_tts_model', ttsModels, null);
+    // 体验优化 2026-11-17：系统默认配音模型（★默认）在页面加载时就要加载它的角色列表。
+    // 根因：过去下拉 value 停在空 placeholder，而角色接口 /api/ai/models/{id}/voices
+    // 不接受空 id（只有生成接口 /api/ai/tts 会 fallback 默认），导致角色下拉永远只有
+    // 「— 模型默认 —」，必须手动重选一次才有角色。这里把默认模型的真实 id 设为选中值，
+    // 并主动加载它的角色列表（显示文案仍是「— 默认：xxx —」，不影响用户认知）。
+    const matTtsSel=document.getElementById('mat_tts_model');
+    if(matTtsSel && !matTtsSel.value){
+      const defM=ttsModels.find(m=>m.is_default) || (ttsModels.length===1?ttsModels[0]:null);
+      if(defM){ matTtsSel.value=defM.id; onMatTtsChange(); }
+    }
   }catch(e){ /* 静默 */ }
 }
 async function fillSelect(selId, models, savedVal){
@@ -7750,7 +7820,7 @@ async function previewVoice(prefix){
   try{
     const r = await fetch('/api/ai/tts/voice-audio',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({provider:'dashscope', base_url:base, model, api_key:key, voice:vid,
-        text:'今天天气不错，我们聊聊这块XX木纹砖的质感。'})});
+        text:'别急，你看——雨停了，风里有青草香，我们出发吧！'})});
     const ct = r.headers.get('content-type')||'';
     if(!r.ok || ct.includes('application/json')){
       const j = await r.json().catch(()=> ({}));

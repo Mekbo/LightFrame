@@ -29,11 +29,14 @@ def _default_style() -> dict:
         "font": "思源黑体",
         "color": "#FFFFFF",
         "weight": 400,
+        "bold": False,        # B 加粗（渲染层用同色描边伪粗体）
+        "italic": False,      # I 倾斜（渲染层用水平错切模拟）
+        "underline": False,   # U 下划线（渲染层画同色横线）
         "stroke": {"width": 0, "color": "#000000"},   # 默认 0：无描边
         "shadow": {"width": 0, "color": "#000000", "blur": 0},  # 默认 0：无阴影
         "opacity": 1.0,           # 字体透明度（0~1），禁止字体背景
         "bg": False,              # 始终 False：不允许字体背景
-        "pos": {"x": 0.5, "y": 0.86},   # 归一化坐标（相对宽/高），跨尺寸一致
+        "pos": {"x": 0.5, "y": 0.5},    # 归一化坐标（相对宽/高），跨尺寸一致；文案文字模板默认垂直居中
         "anchor": "center",       # left / center / right
         "size_ratio": 0.06,       # 字号 = 图片高度 * 此比例
         "stroke_ratio": 0.0,      # 描边宽 = 图片高度 * 此比例（width=0 时禁用）
@@ -55,6 +58,10 @@ def normalize_style(data: dict) -> dict:
             s[k] = data[k]
     s["spec"] = s["spec"] if s["spec"] in ("9:16", "16:9") else "9:16"
     s["weight"] = int(s["weight"]) if str(s["weight"]).isdigit() else 400
+    # 字体样式 B/I/U：显式读入并布尔规范化，兼容历史模板用 weight>=700 表示加粗
+    s["bold"] = bool(data["bold"]) if data.get("bold") is not None else (s["weight"] >= 700)
+    s["italic"] = bool(data.get("italic"))
+    s["underline"] = bool(data.get("underline"))
     s["opacity"] = max(0.1, min(1.0, float(s["opacity"])))
     s["bg"] = False  # 强制禁止字体背景
     # 位置
