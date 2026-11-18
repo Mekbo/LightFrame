@@ -31,8 +31,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.0"
-RELEASE_DATE = "2026-11-17"
+APP_VERSION = "1.0.1"
+RELEASE_DATE = "2026-11-18"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -52,13 +52,24 @@ _NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.0-full-20261117-multibase"
+BUILD_TAG = "v1.0.1-wmcolor-20261118b"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
     {
-        "version": "1.0.0",
+        "version": "1.0.1",
         "date": RELEASE_DATE,
+        "title": "去水印框选增强 + 自定义遮盖色",
+        "items": [
+            "去水印框选：上传图片后可框选任意位置，按相对坐标批量套用到所有图片；水印位置不一致时可逐张框选",
+            "选色融合去水印：新增颜色选择器与图片吸色，先高斯模糊柔化水印、再混入所选背景色，带融合强度滑块可调，避免死板纯色块",
+            "三种修复算法：高斯模糊覆盖、邻近像素填充、选色融合（模糊+选色，推荐），均带边缘羽化过渡",
+            "框选前置：框选坐标基于原图，在缩放/裁切之前处理，同时启用裁切时位置不漂移",
+        ],
+    },
+    {
+        "version": "1.0.0",
+        "date": "2026-11-17",
         "title": "正式版首发（完整基准包）",
         "items": [
             "字体样式 B/I/U：图片加文字与视频字幕/标题支持加粗、倾斜、下划线三种字体样式，Word 式开关，设置即时预览",

@@ -65,8 +65,15 @@ DEFAULTS = {
         "convert": {"enabled": False, "format": "png", "quality": 90, "max_size_mb": 3},
         # 裁切
         "crop": {"enabled": False, "mode": "9:16", "free_w": 0, "free_h": 0},
-        # 去水印
-        "watermark": {"enabled": False, "mode": "cover"},
+        # 去水印：mode=cover 为旧版固定右下角；region 为用户框选区域
+        #   regions: [{x,y,w,h}] 归一化(0..1)共享区域，应用到所有图片
+        #   per_file: {文件名: [{x,y,w,h}]} 逐张框选（优先于 regions）
+        #   algorithm: blur=高斯模糊覆盖；fill=邻近像素填充+羽化；solid=高斯模糊后混入 fill_color（贴近背景色）
+        #   fill_color: solid 算法的融合色，十六进制如 #FFFFFF
+        #   color_strength: solid 算法融合强度 0..100，越高越接近纯色、越低越保留模糊纹理
+        "watermark": {"enabled": False, "mode": "cover", "algorithm": "blur",
+                      "fill_color": "#FFFFFF", "color_strength": 60,
+                      "regions": [], "per_file": {}},
         # 缩放（放大/缩小）
         "resize": {"enabled": False, "mode": "width", "value": 1080},
         # 模板加文字

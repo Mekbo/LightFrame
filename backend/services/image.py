@@ -71,7 +71,10 @@ def apply_resize(img, mode, value):
 
 
 def apply_watermark_cover(img):
-    """简单去水印：右下角区域做高斯模糊覆盖（适用于角落 logo）。"""
+    """简单去水印：右下角区域做高斯模糊覆盖（适用于角落 logo）。
+
+    保留为旧行为（watermark.mode == 'cover'），坐标固定，不依赖用户配置。
+    """
     w, h = img.size
     bw = max(20, int(w * 0.25))
     bh = max(20, int(h * 0.12))
@@ -82,12 +85,155 @@ def apply_watermark_cover(img):
     return img
 
 
+# ---------------------- 框选区域去水印（v1.0.0 累积增强） ----------------------
+# 坐标统一使用归一化 0..1 比例：{x, y, w, h}（左上角 + 宽高）。
+# 这样同一组框选可跨不同分辨率图片复用，且不受缩放/裁切影响。
+def _norm_wm_regions(regions):
+    """把归一化矩形列表规范化为 [(x0, y0, x1, y1)]，越界裁剪、过小的丢弃。"""
+    out = []
+    for r in (regions or []):
+        if not isinstance(r, dict):
+            continue
+        try:
+            x, y = float(r.get("x", 0)), float(r.get("y", 0))
+            w, h = float(r.get("w", 0)), float(r.get("h", 0))
+        except (TypeError, ValueError):
+            continue
+        if w <= 0 or h <= 0:
+            continue
+        x0, y0 = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
+        x1, y1 = min(max(x + w, 0.0), 1.0), min(max(y + h, 0.0), 1.0)
+        if (x1 - x0) < 0.002 or (y1 - y0) < 0.002:
+            continue
+        out.append((x0, y0, x1, y1))
+    return out
+
+
+def _wm_region_to_pixels(box01, size):
+    """归一化矩形 → 像素矩形，保证至少 2px 且不越界。"""
+    w, h = size
+    x0, y0, x1, y1 = box01
+    px0 = max(0, min(int(x0 * w), w - 1))
+    py0 = max(0, min(int(y0 * h), h - 1))
+    px1 = max(px0 + 1, min(int(x1 * w), w))
+    py1 = max(py0 + 1, min(int(y1 * h), h))
+    return (px0, py0, px1, py1)
+
+
+def _wm_blur(img, box):
+    """高斯模糊覆盖：简单稳妥，适合任意背景（旧版行为的任意坐标版）。"""
+    bw, bh = box[2] - box[0], box[3] - box[1]
+    radius = max(6, min(40, min(bw, bh) // 3))
+    patch = img.crop(box).filter(ImageFilter.GaussianBlur(radius))
+    img.paste(patch, box)
+    return img
+
+
+def _wm_fill(img, box):
+    """邻近像素填充 + 羽化：取框外上下左右相邻纹理拉伸铺入，边缘渐隐衔接。
+
+    Pillow 原生实现，不引入 OpenCV / numpy（安装包 runtime 底座保持不变）。
+    纯色或纹理简单的背景效果明显好于纯模糊；复杂纹理建议改用 blur 或人工精修。
+    """
+    x0, y0, x1, y1 = box
+    bw, bh = x1 - x0, y1 - y0
+    if bw < 2 or bh < 2:
+        return img
+    w, h = img.size
+    band = max(4, min(bw // 2, 24))
+    samples = []
+    if y0 - band >= 0:
+        samples.append(img.crop((x0, y0 - band, x1, y0)).resize((bw, bh), Image.BILINEAR))
+    if y1 + band <= h:
+        samples.append(img.crop((x0, y1, x1, y1 + band)).resize((bw, bh), Image.BILINEAR))
+    if x0 - band >= 0:
+        samples.append(img.crop((x0 - band, y0, x0, y1)).resize((bw, bh), Image.BILINEAR))
+    if x1 + band <= w:
+        samples.append(img.crop((x1, y0, x1 + band, y1)).resize((bw, bh), Image.BILINEAR))
+    if not samples:
+        return _wm_blur(img, box)  # 全图覆盖 / 极小图：退化为模糊
+    patch = samples[0]
+    for i, s in enumerate(samples[1:], start=2):
+        patch = Image.blend(patch, s, 1.0 / i)  # 逐个求平均
+    feather = max(2, min(bw, bh) // 8)
+    mask = Image.new("L", (bw, bh), 0)
+    ImageDraw.Draw(mask).rectangle((feather, feather, bw - feather, bh - feather), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(feather))
+    img.paste(patch, (x0, y0), mask)
+    return img
+
+
+def _wm_solid(img, box, color, strength=60):
+    """高斯模糊 + 用户选色融合 + 边缘羽化。
+
+    纯色直接填充会丢失原图纹理、显得死板；而只做高斯模糊又会残留水印的色调。
+    这里先把框选区域高斯模糊柔化水印细节，再按 strength 混入用户选的背景色
+    （strength 越高越接近纯色、越干净；越低越保留模糊后的纹理），最后边缘羽化
+    与原图自然衔接。Pillow 原生实现，不引入新依赖。
+    """
+    x0, y0, x1, y1 = box
+    bw, bh = x1 - x0, y1 - y0
+    if bw < 2 or bh < 2:
+        return img
+    # 1) 高斯模糊原区域：柔化水印边缘与笔画细节
+    radius = max(6, min(48, min(bw, bh) // 3))
+    blurred = img.crop(box).filter(ImageFilter.GaussianBlur(radius))
+    # 2) 按强度混入用户选色（容错：非法值回落到 60%）
+    try:
+        s = float(strength)
+    except (TypeError, ValueError):
+        s = 60.0
+    s = max(0.0, min(100.0, s)) / 100.0
+    rgb = _hex_to_rgba(color)[:3]
+    solid = Image.new("RGB", (bw, bh), rgb)
+    patch = Image.blend(blurred, solid, s) if s > 0 else blurred
+    # 3) 边缘羽化衔接原图，避免出现生硬方块边界
+    feather = max(2, min(bw, bh) // 8)
+    mask = Image.new("L", (bw, bh), 0)
+    ImageDraw.Draw(mask).rectangle((feather, feather, bw - feather, bh - feather), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(feather))
+    img.paste(patch, (x0, y0), mask)
+    return img
+
+
+def apply_watermark_regions(img, regions=None, per_file=None, filename="",
+                            algorithm="blur", fill_color="#FFFFFF", color_strength=60):
+    """按框选区域去水印。
+
+    regions: 共享区域（应用到所有图片）；per_file: {文件名: [区域]} 逐图框选；
+    filename: 当前图片名（按 basename 匹配 per_file）；
+    algorithm: blur / fill / solid（solid = 高斯模糊 + fill_color 选色按 color_strength 融合）。
+    """
+    regs = []
+    if per_file and filename:
+        key = os.path.basename(str(filename)).lower()
+        for k, v in per_file.items():
+            if os.path.basename(str(k)).lower() == key and isinstance(v, list):
+                regs.extend(v)
+    if not regs:
+        regs = regions or []
+    boxes = [_wm_region_to_pixels(b, img.size) for b in _norm_wm_regions(regs)]
+    if not boxes:
+        return img
+    for box in boxes:
+        if algorithm == "solid":
+            img = _wm_solid(img, box, fill_color, color_strength)
+        elif algorithm == "fill":
+            img = _wm_fill(img, box)
+        else:
+            img = _wm_blur(img, box)
+    return img
+
+
 def _hex_to_rgba(hex_color, alpha=255):
-    h = (hex_color or "#000000").lstrip("#")
+    h = str(hex_color or "#000000").strip().lstrip("#")
     if len(h) == 3:
         h = "".join(c * 2 for c in h)
     h = (h + "000000")[:6]
-    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(alpha))
+    try:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(alpha))
+    except (ValueError, TypeError):
+        return (0, 0, 0, int(alpha))   # 颜色值被改坏时兜底为黑色，绝不中断批处理
 
 
 def _anchor_x(anchor, cx, tw):
@@ -372,6 +518,21 @@ def process_image(data: bytes, filename: str, cfg: dict, out_dir: str, text_over
     img = Image.open(io.BytesIO(data))
     img = img.convert("RGB")
 
+    wc = img_cfg.get("watermark", {}) or {}
+
+    # 0) 框选去水印（mode=region）：坐标基于用户看到的原图，必须在缩放/裁切之前处理，
+    #    否则前面的尺寸/构图变化会让框选位置漂移。旧 cover 模式不受影响，仍在步骤 3。
+    if wc.get("enabled") and wc.get("mode", "cover") == "region":
+        img = apply_watermark_regions(
+            img,
+            wc.get("regions") or [],
+            wc.get("per_file") or {},
+            filename,
+            wc.get("algorithm", "blur"),
+            wc.get("fill_color", "#FFFFFF"),
+            wc.get("color_strength", 60),
+        )
+
     # 1) 缩放（放大 / 缩小）
     rc = img_cfg.get("resize", {})
     if rc.get("enabled"):
@@ -391,8 +552,7 @@ def process_image(data: bytes, filename: str, cfg: dict, out_dir: str, text_over
             if ratio:
                 img = crop_to_ratio(img, ratio)
 
-    # 3) 去水印
-    wc = img_cfg.get("watermark", {})
+    # 3) 去水印（旧版固定右下角；框选模式已在步骤 0 处理）
     if wc.get("enabled") and wc.get("mode", "cover") == "cover":
         img = apply_watermark_cover(img)
 

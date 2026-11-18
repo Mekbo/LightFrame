@@ -1027,6 +1027,28 @@
   .modal{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 60px rgba(22,33,58,.28);padding:16px 18px;max-height:88vh;overflow:auto;animation:modalIn .18s ease}
   @keyframes modalIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
   @media(max-width:600px){ .modal-mask{padding:10px} .modal{padding:12px} }
+  /* ---------- 去水印：框选区域 ---------- */
+  .wm-filelist{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;max-height:220px;overflow:auto}
+  .wm-thumb{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;cursor:pointer}
+  .wm-thumb:hover{border-color:#c47f00;box-shadow:0 2px 8px rgba(196,127,0,.18)}
+  .wm-thumb img{width:100%;height:74px;object-fit:cover;display:block;background:#f6f7f9}
+  .wm-thumb span{display:block;padding:4px 6px;font-size:calc(10px * var(--fs));color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wm-pick-modal{width:min(1040px,96vw);max-width:96vw}
+  .wm-pick-body{display:grid;grid-template-columns:190px minmax(0,1fr);gap:14px;margin-top:12px}
+  @media(max-width:700px){ .wm-pick-body{grid-template-columns:1fr} }
+  .wm-pick-side{max-height:58vh;overflow:auto;border-right:1px dashed var(--line);padding-right:8px}
+  .wm-pick-item{display:flex;gap:8px;align-items:center;padding:5px;border:1px solid transparent;border-radius:8px;cursor:pointer;margin-bottom:4px}
+  .wm-pick-item:hover{background:#fafbfc}
+  .wm-pick-item.on{border-color:#c47f00;background:#fff8ec}
+  .wm-pick-item img{width:44px;height:44px;object-fit:cover;border-radius:5px;flex:none;background:#eee}
+  .wm-pick-item span{flex:1;font-size:calc(11px * var(--fs));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wm-pick-item .wm-done{font-size:10px;color:#c47f00;flex:none}
+  .wm-canvas-wrap{position:relative;display:inline-block;max-width:100%;line-height:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#f6f7f9;cursor:crosshair}
+  .wm-canvas-wrap img{display:block;max-width:100%;max-height:54vh;user-select:none;-webkit-user-drag:none}
+  .wm-sel{position:absolute;border:2px solid #e11d48;background:rgba(225,29,72,.16);pointer-events:none}
+  .wm-sel-done{position:absolute;border:2px dashed #c47f00;background:rgba(196,127,0,.10);pointer-events:none}
+  .wm-region-tag{display:inline-block;padding:3px 8px;border:1px solid #f0d9b5;border-radius:10px;background:#fff8ec;color:#8a5a00;font-size:calc(10px * var(--fs));margin:4px 4px 0 0;line-height:1.5}
+  .wm-region-tag a{color:#c0392b;text-decoration:none;font-weight:800;margin-left:3px}
 </style>
 </head>
 <body>
@@ -1181,11 +1203,39 @@
     <div class="panel" id="panel-watermark">
       <div class="tool-head">
         <label class="switch"><input type="checkbox" id="wm_enabled" onchange="autoSaveConfig()"><span class="slider"></span></label>
-        <b>去水印</b><span class="hint" style="margin:0">简单处理（角落模糊覆盖）</span>
+        <b>去水印</b><span class="hint" style="margin:0">支持框选任意位置 · 批量应用</span>
       </div>
       <label>处理方式</label>
-      <select id="wm_mode"><option value="cover">角落高斯模糊覆盖</option></select>
-      <div class="hint">适用于角落 logo / 水印；复杂水印建议后期手动精修。</div>
+      <select id="wm_mode" onchange="wmOnModeChange();autoSaveConfig()">
+        <option value="cover">右下角固定区域（旧版行为）</option>
+        <option value="region">框选指定区域（可批量）</option>
+      </select>
+      <div id="wmRegionBox" style="display:none">
+        <label style="margin-top:8px">修复算法</label>
+        <select id="wm_algorithm" onchange="wmOnAlgoChange();autoSaveConfig()">
+          <option value="blur">高斯模糊覆盖（通用稳妥）</option>
+          <option value="fill">邻近像素填充（适合纯色/简单背景）</option>
+          <option value="solid">选色融合（模糊后混入背景色，推荐）</option>
+        </select>
+        <div id="wmColorBox" style="display:none;margin-top:8px">
+          <label>遮盖颜色 <span class="hint" style="margin:0">选一个与水印周围背景接近的颜色</span></label>
+          <div class="row" style="align-items:center;gap:10px;margin-top:4px">
+            <input type="color" id="wm_fill_color" value="#FFFFFF" onchange="wmSyncTextFromPicker();autoSaveConfig()" style="width:52px;height:34px;padding:0;border:none;background:none;cursor:pointer">
+            <input type="text" id="wm_fill_color_hex" value="#FFFFFF" onchange="wmSyncHexFromText()" oninput="wmSyncHexFromText()" maxlength="7" placeholder="#FFFFFF" style="width:110px">
+            <span class="hint" style="margin:0">可用取色器或手动输入色值</span>
+          </div>
+          <label style="margin-top:10px">融合强度 <b id="wmStrengthVal" style="color:var(--accent,#c9962f)">60%</b></label>
+          <input type="range" id="wm_color_strength" min="0" max="100" value="60" oninput="document.getElementById('wmStrengthVal').textContent=this.value+'%'" onchange="autoSaveConfig()" style="width:100%;margin-top:4px">
+          <div class="hint" style="margin-top:2px">越高越接近所选纯色（更干净）；越低越保留原图模糊纹理。水印残留明显就调高，想更自然就调低。</div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn-ghost btn-sm" type="button" onclick="openWmPicker()" style="flex:1">🖱 框选水印位置</button>
+          <button class="btn-ghost btn-sm" type="button" onclick="clearWmRegions()" style="flex:1">清空框选</button>
+        </div>
+        <div class="hint" style="margin-top:6px">按相对位置（百分比）套用到所有图片；水印位置不一致时，可在框选窗口里逐张设置。</div>
+        <div id="wmRegionList" class="wm-region-list" style="margin-top:4px">尚未框选</div>
+      </div>
+      <div class="hint" style="margin-top:8px">复杂水印（大面积 / 纹理背景）无法完全去除，建议人工精修。在线用户的空间素材同样可框选。</div>
     </div>
 
     <!-- 缩放 -->
@@ -2308,7 +2358,7 @@
           <h3>光影工坊工作台</h3>
           <p>一套本地运行的图片处理、文案生产与视频创作工作台。左侧按场景分组，选中功能后在中间面板设置参数、添加素材、提交任务，进度与产物统一在「任务管理」查看。</p>
         </div>
-        <div class="ab-ver">正式版 v1.0.0</div>
+        <div class="ab-ver">正式版 v1.0.1</div>
       </div>
 
       <!-- 本地服务信息：只在使用指南里展示，游客不可见 -->
@@ -2420,7 +2470,7 @@
       <div class="up-top">
         <div class="up-ver">
           <div class="up-cap">CURRENT VERSION · 当前版本</div>
-          <div class="up-vnum">v<span id="upCurVer">1.0.0</span><small>正式版</small></div>
+          <div class="up-vnum">v<span id="upCurVer">1.0.1</span><small>正式版</small></div>
           <div class="up-vsub">发布日期 <span id="upRelDate">2026-11-17</span><br>光影工坊工作台 · 本地运行</div>
         </div>
         <div class="up-state">
@@ -3347,12 +3397,215 @@ function addFiles(fileList){
   selectedFiles = selectedFiles.concat(arr);
   renderFileList();
 }
+let imgFileUrls = [];   // 图片素材缩略图 objectURL 池，重绘时统一回收
 function renderFileList(){
   const el = document.getElementById('filelist');
-  if(!selectedFiles.length){ el.innerHTML='<div class="empty">尚未选择文件</div>'; }
-  else { el.innerHTML = selectedFiles.map(f=>`<div>${escapeHtml(f.name)}</div>`).join(''); }
+  imgFileUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} }); imgFileUrls=[];
+  if(!selectedFiles.length){
+    el.className='filelist';
+    el.innerHTML='<div class="empty">尚未选择文件</div>';
+  } else {
+    el.className='filelist wm-filelist';
+    el.innerHTML = selectedFiles.map((f,i)=>{
+      const u=URL.createObjectURL(f); imgFileUrls.push(u);
+      return `<div class="wm-thumb" title="点击框选水印位置：${escapeHtml(f.name)}" onclick="openWmPicker(${i})"><img src="${u}" alt=""><span>${escapeHtml(f.name)}</span></div>`;
+    }).join('');
+  }
   const c = document.getElementById('imgCount');
   if(c) c.textContent = (selectedFiles?selectedFiles.length:0) + (spaceSel.image?spaceSel.image.length:0);
+}
+
+/* ============ 去水印：框选区域交互（相对坐标，可跨尺寸批量） ============ */
+let wmRegions = [];       // 共享区域 [{x,y,w,h}]，应用到所有图片
+let wmPerFile = {};       // {文件名小写: [{x,y,w,h}]} 逐图专属，优先于共享
+let wmDraft = [];         // 当前拖拽草稿框
+let wmPickerItems = [];   // [{name, key, url, own}]
+let wmPickerIndex = 0;
+let wmDragStart = null;
+
+function wmKey(name){ return String(name||'').split(/[\\/]/).pop().toLowerCase(); }
+function wmCloneRects(arr){ return (arr||[]).map(r=>({x:r.x,y:r.y,w:r.w,h:r.h})); }
+
+function openWmPicker(index){
+  const items=[];
+  selectedFiles.forEach(f=>items.push({name:f.name,key:wmKey(f.name),url:URL.createObjectURL(f),own:true}));
+  (spaceSel.image||[]).forEach(x=>{
+    const nm=x.name || String(x.rel||'').split('/').pop();
+    items.push({name:nm,key:wmKey(nm),url:'/api/space/file?path='+encodeURIComponent(x.rel)+'&inline=1',own:false});
+  });
+  if(!items.length){ toast('请先添加图片素材','warning'); return; }
+  wmPickerItems.forEach(it=>{ if(it.own) try{ URL.revokeObjectURL(it.url); }catch(e){} });
+  wmPickerItems=items;
+  wmPickerIndex=Math.max(0,Math.min(index||0,items.length-1));
+  wmDraft=[];
+  wmEnsureDragBound();
+  renderWmPickerList(); loadWmPickerImage();
+  document.getElementById('wmPickerMask').style.display='flex';
+}
+function closeWmPicker(){
+  wmPickerItems.forEach(it=>{ if(it.own) try{ URL.revokeObjectURL(it.url); }catch(e){} });
+  wmPickerItems=[]; wmDraft=[]; wmEyeMode=false;
+  const _pb=document.getElementById('wmPickColorBtn'); if(_pb) _pb.textContent='💧 吸取背景色';
+  const _cw=document.getElementById('wmCanvasWrap'); if(_cw) _cw.style.cursor='';
+  document.getElementById('wmPickerMask').style.display='none';
+  autoSaveConfig();
+}
+function renderWmPickerList(){
+  const el=document.getElementById('wmPickerList'); if(!el) return;
+  el.innerHTML=wmPickerItems.map((it,i)=>{
+    const n=(wmPerFile[it.key]||[]).length;
+    return `<div class="wm-pick-item ${i===wmPickerIndex?'on':''}" onclick="wmPickImage(${i})"><img src="${it.url}" alt=""><span title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>${n?`<b class="wm-done">已框${n}</b>`:''}</div>`;
+  }).join('');
+}
+function wmPickImage(i){ wmDraft=[]; wmPickerIndex=i; renderWmPickerList(); loadWmPickerImage(); }
+function loadWmPickerImage(){
+  const it=wmPickerItems[wmPickerIndex]; if(!it) return;
+  const img=document.getElementById('wmCanvasImg');
+  img.onload=()=>{ wmDrawRects(); };
+  img.src=it.url;
+  wmDrawRects(); wmUpdateHint();
+}
+function wmDrawRects(){
+  const wrap=document.getElementById('wmCanvasWrap'); if(!wrap) return;
+  wrap.querySelectorAll('.wm-sel-done').forEach(n=>n.remove());
+  const it=wmPickerItems[wmPickerIndex];
+  const per=it?(wmPerFile[it.key]||[]):[];
+  (wmRegions||[]).concat(per).forEach(r=>{
+    const d=document.createElement('div'); d.className='wm-sel-done';
+    d.style.left=(r.x*100)+'%'; d.style.top=(r.y*100)+'%';
+    d.style.width=(r.w*100)+'%'; d.style.height=(r.h*100)+'%';
+    wrap.appendChild(d);
+  });
+  const sel=document.getElementById('wmSel');
+  if(wmDraft.length){
+    const r=wmDraft[wmDraft.length-1]; sel.style.display='block';
+    sel.style.left=(r.x*100)+'%'; sel.style.top=(r.y*100)+'%';
+    sel.style.width=(r.w*100)+'%'; sel.style.height=(r.h*100)+'%';
+  } else sel.style.display='none';
+}
+function wmUpdateHint(){
+  const el=document.getElementById('wmCoordHint'); if(!el) return;
+  const it=wmPickerItems[wmPickerIndex];
+  const per=it?(wmPerFile[it.key]||[]):[];
+  const r=wmDraft[wmDraft.length-1];
+  el.textContent=(r?('当前草稿 x='+(r.x*100).toFixed(1)+'% y='+(r.y*100).toFixed(1)+'% 宽='+(r.w*100).toFixed(1)+'% 高='+(r.h*100).toFixed(1)+'%　·　'):'')
+    +'共享区域 '+(wmRegions||[]).length+' 个 · 本图专属 '+per.length+' 个';
+}
+function wmApplyShared(){
+  if(!wmDraft.length){ toast('请先在图片上拖拽画框','warning'); return; }
+  wmRegions=wmRegions.concat(wmCloneRects(wmDraft));
+  wmDraft=[]; wmDrawRects(); wmUpdateHint(); wmRefreshRegionList(); autoSaveConfig();
+  toast('已应用到全部图片','ok');
+}
+function wmApplyCurrent(){
+  if(!wmDraft.length){ toast('请先在图片上拖拽画框','warning'); return; }
+  const it=wmPickerItems[wmPickerIndex]; if(!it) return;
+  wmPerFile[it.key]=(wmPerFile[it.key]||[]).concat(wmCloneRects(wmDraft));
+  wmDraft=[]; wmDrawRects(); wmUpdateHint(); wmRefreshRegionList(); renderWmPickerList(); autoSaveConfig();
+  toast('已设置为此图专属区域','ok');
+}
+function wmUndoDraft(){ wmDraft=[]; wmDrawRects(); wmUpdateHint(); }
+function wmDelRegion(kind,i){
+  if(kind==='shared') wmRegions.splice(i,1);
+  else { const k=decodeURIComponent(kind); if((wmPerFile[k]||[]).length) wmPerFile[k].splice(i,1); }
+  wmRefreshRegionList(); wmDrawRects(); wmUpdateHint(); renderWmPickerList(); autoSaveConfig();
+}
+function clearWmRegions(){
+  if(!confirm('确认清空所有框选区域？')) return;
+  wmRegions=[]; wmPerFile={}; wmDraft=[];
+  wmRefreshRegionList(); wmDrawRects(); wmUpdateHint(); renderWmPickerList(); autoSaveConfig();
+  toast('已清空框选','ok');
+}
+function wmRefreshRegionList(){
+  const el=document.getElementById('wmRegionList'); if(!el) return;
+  const tags=[];
+  (wmRegions||[]).forEach((r,i)=>tags.push(`<span class="wm-region-tag">全局${i+1} ${(r.x*100).toFixed(0)},${(r.y*100).toFixed(0)} ${(r.w*100).toFixed(0)}×${(r.h*100).toFixed(0)}<a href="javascript:void(0)" onclick="wmDelRegion('shared',${i})">×</a></span>`));
+  Object.keys(wmPerFile||{}).forEach(k=>(wmPerFile[k]||[]).forEach((r,i)=>tags.push(`<span class="wm-region-tag">${escapeHtml(k)} ${(r.x*100).toFixed(0)},${(r.y*100).toFixed(0)}<a href="javascript:void(0)" onclick="wmDelRegion('${encodeURIComponent(k)}',${i})">×</a></span>`)));
+  el.innerHTML=tags.length?tags.join(''):'尚未框选';
+}
+function wmOnModeChange(){
+  const box=document.getElementById('wmRegionBox');
+  if(box) box.style.display=(document.getElementById('wm_mode').value==='region'?'block':'none');
+  wmOnAlgoChange();
+}
+function wmOnAlgoChange(){
+  const box=document.getElementById('wmColorBox');
+  if(box) box.style.display=(document.getElementById('wm_algorithm').value==='solid'?'block':'none');
+}
+function wmSyncHexFromText(){
+  const t=document.getElementById('wm_fill_color_hex'), c=document.getElementById('wm_fill_color');
+  if(!t||!c) return;
+  let v=(t.value||'').trim();
+  if(/^#[0-9a-fA-F]{6}$/.test(v)) c.value=v;          // 完整色值同步到取色器
+  else if(/^#[0-9a-fA-F]{3}$/.test(v)) c.value='#'+v[1]+v[1]+v[2]+v[2]+v[3]+v[3];
+}
+function wmSyncTextFromPicker(){
+  const t=document.getElementById('wm_fill_color_hex'), c=document.getElementById('wm_fill_color');
+  if(t&&c) t.value=c.value.toUpperCase();
+}
+/* 吸色：从框选图片上取水印旁边背景色，填入遮盖色 */
+let wmEyeMode=false;
+function wmToggleEyedropper(){
+  wmEyeMode=!wmEyeMode;
+  const b=document.getElementById('wmPickColorBtn');
+  if(b) b.textContent=wmEyeMode?'💧 吸色中·点击图片':'💧 吸取背景色';
+  const wrap=document.getElementById('wmCanvasWrap');
+  if(wrap) wrap.style.cursor=wmEyeMode?'crosshair':'';
+  const h=document.getElementById('wmEyeHint');
+  if(h) h.textContent=wmEyeMode?'吸色模式已开启：点击图片上水印旁边的干净区域取色（再次点按钮退出）。':'「吸取背景色」开启后，点击图片上水印旁边的干净区域即可自动填入遮盖色（配合「选色融合」算法使用）。';
+}
+function wmPickColorAt(e){
+  const img=document.getElementById('wmCanvasImg'); if(!img||!img.complete||!img.naturalWidth){ toast('图片尚未加载完成','warning'); return; }
+  const rect=img.getBoundingClientRect();
+  const px=Math.floor((e.clientX-rect.left)/rect.width*img.naturalWidth);
+  const py=Math.floor((e.clientY-rect.top)/rect.height*img.naturalHeight);
+  try{
+    const cv=document.createElement('canvas'); cv.width=img.naturalWidth; cv.height=img.naturalHeight;
+    const ctx=cv.getContext('2d'); ctx.drawImage(img,0,0);
+    const d=ctx.getImageData(Math.max(0,Math.min(px,cv.width-1)),Math.max(0,Math.min(py,cv.height-1)),1,1).data;
+    const hex='#'+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase();
+    document.getElementById('wm_fill_color').value=hex;
+    document.getElementById('wm_fill_color_hex').value=hex;
+    document.getElementById('wm_algorithm').value='solid';
+    wmOnAlgoChange(); autoSaveConfig();
+    toast('已取色 '+hex+'，已切换到选色融合','ok');
+    wmEyeMode=false;
+    const b=document.getElementById('wmPickColorBtn'); if(b) b.textContent='💧 吸取背景色';
+    const wrap=document.getElementById('wmCanvasWrap'); if(wrap) wrap.style.cursor='';
+  }catch(err){
+    toast('此图片无法取色（跨域限制），请用系统取色工具手动输入色值','warning');
+  }
+}
+/* 拖拽画框：弹窗 DOM 在脚本之后，故首次打开时再绑定（只绑一次） */
+let wmDragBound=false;
+function wmEnsureDragBound(){
+  if(wmDragBound) return;
+  const wrap=document.getElementById('wmCanvasWrap'); if(!wrap) return;
+  wmDragBound=true;
+  const pos=e=>{
+    const rect=document.getElementById('wmCanvasImg').getBoundingClientRect();
+    if(!rect.width||!rect.height) return null;
+    return {x:Math.min(Math.max((e.clientX-rect.left)/rect.width,0),1),
+            y:Math.min(Math.max((e.clientY-rect.top)/rect.height,0),1)};
+  };
+  wrap.addEventListener('mousedown',e=>{
+    if(e.button!==0) return;
+    if(wmEyeMode){ wmPickColorAt(e); e.preventDefault(); return; }   // 吸色模式：取色不画框
+    wmDragStart=pos(e); if(wmDragStart) e.preventDefault();
+  });
+  window.addEventListener('mousemove',e=>{
+    if(!wmDragStart) return;
+    const p=pos(e); if(!p) return;
+    wmDraft=[{x:Math.min(wmDragStart.x,p.x),y:Math.min(wmDragStart.y,p.y),
+              w:Math.abs(p.x-wmDragStart.x),h:Math.abs(p.y-wmDragStart.y)}];
+    wmDrawRects(); wmUpdateHint();
+  });
+  window.addEventListener('mouseup',()=>{
+    if(!wmDragStart) return;
+    wmDragStart=null;
+    if(wmDraft.length && (wmDraft[0].w<0.005 || wmDraft[0].h<0.005)) wmDraft=[];
+    wmDrawRects(); wmUpdateHint();
+  });
 }
 function clearImageFiles(){
   selectedFiles = []; spaceSel.image = [];
@@ -5603,6 +5856,17 @@ async function loadConfig(){
     document.getElementById('crop_fw').value = g(img.crop,'free_w');
     document.getElementById('crop_fh').value = g(img.crop,'free_h');
     document.getElementById('wm_enabled').checked = g(img.watermark,'enabled');
+    document.getElementById('wm_mode').value = g(img.watermark,'mode') || 'cover';
+    document.getElementById('wm_algorithm').value = g(img.watermark,'algorithm') || 'blur';
+    var _fc = g(img.watermark,'fill_color') || '#FFFFFF';
+    document.getElementById('wm_fill_color').value = _fc;
+    document.getElementById('wm_fill_color_hex').value = _fc.toUpperCase();
+    var _cs = g(img.watermark,'color_strength'); if(_cs===undefined || _cs===null || _cs==='') _cs=60;
+    document.getElementById('wm_color_strength').value = _cs;
+    document.getElementById('wmStrengthVal').textContent = _cs+'%';
+    wmRegions = wmCloneRects(img.watermark && img.watermark.regions);
+    wmPerFile = JSON.parse(JSON.stringify((img.watermark && img.watermark.per_file) || {}));
+    wmOnModeChange(); wmRefreshRegionList();
     document.getElementById('rz_enabled').checked = g(img.resize,'enabled');
     document.getElementById('rz_mode').value = g(img.resize,'mode');
     document.getElementById('rz_value').value = g(img.resize,'value');
@@ -5632,7 +5896,12 @@ function collectImage(){
       free_w:parseInt(document.getElementById('crop_fw').value)||0,
       free_h:parseInt(document.getElementById('crop_fh').value)||0},
     watermark:{enabled:document.getElementById('wm_enabled').checked,
-      mode:document.getElementById('wm_mode').value},
+      mode:document.getElementById('wm_mode').value,
+      algorithm:document.getElementById('wm_algorithm').value,
+      fill_color:document.getElementById('wm_fill_color').value || '#FFFFFF',
+      color_strength:parseInt(document.getElementById('wm_color_strength').value)||0,
+      regions:wmCloneRects(wmRegions),
+      per_file:JSON.parse(JSON.stringify(wmPerFile||{}))},
     resize:{enabled:document.getElementById('rz_enabled').checked,
       mode:document.getElementById('rz_mode').value,
       value:parseInt(document.getElementById('rz_value').value)||0},
@@ -8401,5 +8670,30 @@ async function spPickConfirm(){
 function spacePickerConfirm(){ spPickConfirm(); }
 function closeSpacePicker(){ document.getElementById('spPickMask').style.display='none'; }
 </script>
+
+<!-- 去水印框选弹窗 -->
+<div class="modal-mask" id="wmPickerMask" style="display:none">
+  <div class="modal wm-pick-modal">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <b style="font-size:calc(15px * var(--fs))">🖱 框选水印位置</b>
+      <button class="btn-ghost btn-xs" type="button" onclick="closeWmPicker()">关闭</button>
+    </div>
+    <div class="hint" style="margin-top:5px">在右侧图片上按住鼠标拖拽画框。可画多个：点「应用到全部图片」按相对位置批量套用；水印位置不一致时，切换左侧图片后点「仅此图」逐张设置。</div>
+    <div class="wm-pick-body">
+      <div class="wm-pick-side" id="wmPickerList"></div>
+      <div>
+        <div class="wm-canvas-wrap" id="wmCanvasWrap"><img id="wmCanvasImg" alt="框选预览"><div id="wmSel" class="wm-sel" style="display:none"></div></div>
+        <div class="hint" id="wmCoordHint" style="margin-top:6px">尚未框选</div>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap">
+          <button class="btn-ghost btn-sm" type="button" onclick="wmApplyShared()">应用到全部图片</button>
+          <button class="btn-ghost btn-sm" type="button" onclick="wmApplyCurrent()">仅此图</button>
+          <button class="btn-ghost btn-sm" type="button" onclick="wmUndoDraft()">撤销当前框</button>
+          <button class="btn-ghost btn-sm" type="button" id="wmPickColorBtn" onclick="wmToggleEyedropper()">💧 吸取背景色</button>
+        </div>
+        <div class="hint" id="wmEyeHint" style="margin-top:5px;color:var(--muted)">「吸取背景色」开启后，点击图片上水印旁边的干净区域即可自动填入遮盖色（配合「选色融合」算法使用）。</div>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
