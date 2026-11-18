@@ -24,6 +24,42 @@ DETACHED = 0x00000008
 NEW_GROUP = 0x00000200
 NO_WINDOW = 0x08000000
 
+# ---------------------------------------------------------------------------
+# PyInstaller onefile 私有环境变量（重启失败的根因）
+#
+# 光影工坊.exe 以 --onefile 打包，bootloader 启动时会设置一组 _PYI_* 变量，
+# 其中 _PYI_APPLICATION_HOME_DIR 记录了它解压到的 %TEMP%\_MEI_xxx 目录。
+# 这些变量会经由「exe → runtime\python.exe(后端) → 本助手」一路继承。
+# 若助手启动新 exe 时不清理，新 exe 会误以为自己是「已解压的子进程」，
+# 直接复用旧进程退出时早已删除的 _MEI 目录，于是加载 python313.dll 失败，
+# 报「找不到指定的模块」——这正是应用内「安装更新 → 重启应用」失败的原因。
+#
+# 修复：启动新 exe 时传一份剔除私有变量的 env；助手自身也先清一遍做双保险。
+# 只删 bootloader 私有键，PATH / SYSTEMROOT / TEMP / COMSPEC 等全部保留。
+# ---------------------------------------------------------------------------
+RESTART_FIX_TAG = "restartfix-20261118"
+_PYI_ENV_PREFIX = "_PYI_"
+_PYI_EXTRA_KEYS = frozenset({"_MEIPASS2"})
+
+
+def _is_pyi_key(key: str) -> bool:
+    u = key.upper()
+    return u.startswith(_PYI_ENV_PREFIX) or u in _PYI_EXTRA_KEYS
+
+
+def _clean_child_env(base=None) -> dict:
+    """返回一份剔除 PyInstaller 私有变量的环境，供启动新 exe 时使用。"""
+    src = os.environ if base is None else base
+    return {k: v for k, v in src.items() if not _is_pyi_key(k)}
+
+
+def _purge_pyi_env() -> int:
+    """从当前进程环境剔除私有变量，返回剔除数量（助手自身双保险）。"""
+    keys = [k for k in os.environ if _is_pyi_key(k)]
+    for k in keys:
+        os.environ.pop(k, None)
+    return len(keys)
+
 
 def log(msg: str) -> None:
     try:
@@ -78,7 +114,9 @@ def main() -> int:
     ap.add_argument("--marker", required=True)
     a = ap.parse_args()
 
-    log("助手启动，等待后端 pid=%d 退出" % a.pid)
+    purged = _purge_pyi_env()
+    log("助手启动 [%s]，已剔除 %d 个 PyInstaller 私有变量，等待后端 pid=%d 退出"
+        % (RESTART_FIX_TAG, purged, a.pid))
     deadline = time.time() + 90
     while time.time() < deadline:
         if not pid_alive(a.pid):
@@ -95,14 +133,17 @@ def main() -> int:
         log("错误：找不到启动器 %s" % exe)
         return 3
     try:
+        env = _clean_child_env()
         subprocess.Popen([str(exe), "--autostart"],
                          cwd=str(Path(a.app)),
+                         env=env,  # 关键：不继承 _PYI_* / _MEIPASS2，否则新 exe 复用旧 _MEI 目录
                          stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL,
                          creationflags=DETACHED | NEW_GROUP | NO_WINDOW if os.name == "nt" else 0,
                          close_fds=True)
-        log("已调用 --autostart 拉起服务")
+        log("已调用 --autostart 拉起服务（已剔除 %d 个私有变量，新 exe 环境干净）"
+            % purged)
     except Exception as e:
         log("错误：拉起服务失败 %s" % e)
         return 4
