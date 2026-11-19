@@ -1953,11 +1953,16 @@
       <div class="modal sp-pick-modal">
         <div class="sp-prev-head"><b id="spPickTitle">从我的空间选择</b><button class="btn-ghost btn-sm" onclick="closeSpacePicker()">✕</button></div>
         <div class="sp-crumb" id="spPickCrumb"></div>
-        <div class="row" style="gap:8px;margin:4px 0 6px">
+        <div class="row" style="gap:8px;margin:4px 0 6px;flex-wrap:wrap">
           <button class="btn-ghost btn-sm" onclick="spPickSelectAll()">☑ 全选本页</button>
           <button class="btn-ghost btn-sm" onclick="spPickInvertSel()">⇄ 反选</button>
-          <span class="hint" style="flex:1;margin:0" id="spPickSelCount"></span>
+          <!-- 在工作区内就地建目录 / 上传，免去「返回我的空间上传后再回来重选」 -->
+          <button class="btn-ghost btn-sm" id="spPickMkdirBtn" onclick="spPickNewFolder()">＋ 新建文件夹</button>
+          <button class="btn-ghost btn-sm" id="spPickUploadBtn" onclick="spPickPickFiles()">⬆ 上传</button>
+          <input type="file" id="spPickFileInput" multiple style="display:none" onchange="spPickUpload(this.files)">
+          <span class="hint" style="flex:1;margin:0;text-align:right" id="spPickSelCount"></span>
         </div>
+        <div class="sp-upload-tip" id="spPickUploadTip"></div>
         <div class="sp-grid" id="spPickGrid" style="max-height:46vh;overflow:auto"></div>
         <div class="row" style="margin-top:12px;justify-content:flex-end;gap:8px">
           <button class="btn-ghost btn-sm" onclick="closeSpacePicker()">取消</button>
@@ -8392,7 +8397,7 @@ async function loadSpaceList(resetPage){
                                          : '空间根目录不允许直接上传文件，请先进入或新建子目录');
     }
     document.getElementById('spCrumb').innerHTML = spCrumb(p.path);
-    if(document.getElementById('spPickCrumb')) document.getElementById('spPickCrumb').innerHTML = spCrumb(p.path);
+    if(document.getElementById('spPickCrumb')) document.getElementById('spPickCrumb').innerHTML = spPickCrumb(p.path);
     renderSpaceGrid();
     document.getElementById('spPageText').textContent = '第 '+p.page+' / '+p.pages+' 页';
     document.getElementById('spPrev').disabled = p.page<=1;
@@ -8578,6 +8583,10 @@ function openSpacePreview(rel, kind){
 function closeSpacePreview(){ document.getElementById('spPrevMask').style.display='none'; document.getElementById('spPrevBody').onwheel=null; }
 /* 空间选择器（工作区「从空间添加」复用） */
 let _spPickCb=null, _spPickKinds=null, _spPickSel=new Set(), _spPickPath='', _spPickPageRels=[], _spPickMode='both', _spPickKind={};
+/* 选择器内上传 / 建目录的状态（后端按「空间根目录不可直传、作品目录产物专用」限制，按钮据此禁用） */
+let _spPickCanUpload=false, _spPickCanMkdir=true, _spPickMaxFiles=10, _spPickMaxMb=200, _spPickUploadXhr=null;
+/* 根目录点上传时暂存待建的素材文件夹名（选完文件后再建目录+上传） */
+let _spPickPendingDir='';
 /* mode: 'file'=仅勾选文件（目录只能点击进入）；'dir'=仅勾选目录（确认后整目录展开）；
    'both'=文件与目录都可勾选 */
 function openSpacePicker(kinds, cb, mode){
@@ -8586,13 +8595,76 @@ function openSpacePicker(kinds, cb, mode){
   const t = document.getElementById('spPickTitle');
   if(t) t.textContent = _spPickMode==='dir' ? '从我的空间选择目录'
     : _spPickMode==='file' ? '从我的空间选择文件' : '从我的空间选择';
+  const tip = document.getElementById('spPickUploadTip'); if(tip) tip.textContent='';
+  const inp = document.getElementById('spPickFileInput');
+  if(inp){ inp.value=''; inp.accept = spPickAccept(_spPickKinds); }
+  // 上传限额与服务端一致（空间页用的是同一组字段），失败则沿用默认值
+  fetch('/api/space/info').then(r=>r.json()).then(j=>{
+    if(j && j.ok){ _spPickMaxFiles = j.max_files||10; _spPickMaxMb = j.max_total_mb||200; }
+  }).catch(()=>{});
   document.getElementById('spPickMask').style.display='flex';
   loadSpacePickList();
+}
+/* 按当前工作区需要的素材类型收窄系统文件选择框（避免选到注定被拒的文件） */
+function spPickAccept(kinds){
+  const m = [];
+  if(kinds.includes('image')) m.push('image/*');
+  if(kinds.includes('video')) m.push('video/*');
+  if(kinds.includes('audio')) m.push('audio/*');
+  if(kinds.includes('text')) m.push('.txt','.srt','.md','.csv','.json');
+  if(kinds.includes('file')) m.push('.pdf','.doc','.docx','.xls','.xlsx','.ppt','.pptx','.zip',
+                                   '.txt','.md','.csv','.srt','.json');
+  return m.join(',');
+}
+/* 选择器内面包屑：点击应该切选择器自己的路径，不能复用空间页的 spaceNavigate */
+function spPickCrumb(path){
+  const parts = (path||'').split('/').filter(Boolean);
+  let h = '<span class="c" onclick="spPickNav(\'\')">我的空间</span>';
+  let acc = '';
+  parts.forEach(p=>{
+    acc = (acc?acc+'/':'')+p;
+    h += ' / <span class="c'+(p===parts[parts.length-1]?' cur':'')+'" onclick="spPickNav(\''+spEsc(acc)+'\')">'+spEsc(p)+'</span>';
+  });
+  return h;
+}
+/* 文件类别（按扩展名推断）：后端只按图片/视频/其它粗分，这里细化到音频与文本，
+   让「图片工作区不会勾到 txt」「配音工作区不会勾到 pdf」 */
+function _spPickGuessKind(name){
+  if(IMG_EXT_RE.test(name)) return 'image';
+  if(VID_EXT_RE.test(name)) return 'video';
+  if(AUDIO_EXT_RE.test(name)) return 'audio';
+  if(TXT_EXT_RE.test(name)) return 'text';
+  return 'file';
+}
+/* 文件是否可被当前工作区勾选（渲染与「上传后自动勾选」共用同一判定）：
+   类别命中 kinds 即可；kinds 含 'file' 表示不限类型 */
+function _spPickFileAllowed(name){
+  if(_spPickMode === 'dir') return false;
+  const k = _spPickGuessKind(name);
+  return _spPickKinds.includes(k) || _spPickKinds.includes('file');
 }
 async function loadSpacePickList(){
   const r = await fetch('/api/space/list?path='+encodeURIComponent(_spPickPath)+'&per_page=50');
   const j = await r.json(); if(!j.ok) return;
-  document.getElementById('spPickCrumb').innerHTML = spCrumb(_spPickPath);
+  document.getElementById('spPickCrumb').innerHTML = spPickCrumb(_spPickPath);
+  // 根目录不可直传、作品目录禁建 → 按钮置灰并说明原因，避免点了才报错
+  _spPickCanUpload = !!j.can_upload;
+  _spPickCanMkdir = j.can_create_subdir !== false;
+  const atRoot = !_spPickPath;
+  const upBtn = document.getElementById('spPickUploadBtn');
+  if(upBtn){
+    // 根目录允许点击：会先引导建一个素材文件夹再上传，省掉「先去别处建目录」
+    upBtn.disabled = !_spPickCanUpload && !atRoot;
+    upBtn.style.opacity = upBtn.disabled ? '.45' : '';
+    upBtn.title = _spPickCanUpload ? '上传文件到当前目录'
+      : atRoot ? '空间根目录不能直接放文件：点击会先新建素材文件夹，再选文件上传'
+               : '作品目录为产物专用，请上传到自建素材目录';
+  }
+  const mkBtn = document.getElementById('spPickMkdirBtn');
+  if(mkBtn){
+    mkBtn.disabled = !_spPickCanMkdir; mkBtn.style.opacity = _spPickCanMkdir?'':'.45';
+    mkBtn.title = _spPickCanMkdir ? '在当前目录新建文件夹' : '素材目录层数已达上限，请进入上层目录新建';
+  }
   const grid = document.getElementById('spPickGrid');
   _spPickPageRels = [];   // 当前页所有可勾选条目（目录 + 类型匹配的文件）
   let html = '';
@@ -8603,25 +8675,33 @@ async function loadSpacePickList(){
       const checked = _spPickSel.has(e.rel);
       const canCk = _spPickMode !== 'file' && !e.protected && !e.sysdir;  // 系统目录不可选
       _spPickKind[e.rel]='dir';
+      /* 目录操作与「我的空间」管理页对齐：作品根不可动、输出目录只能改名、普通目录改名+删除 */
+      const enterBtn = '<button class="btn-ghost btn-sm" onclick="event.stopPropagation();spPickNav(\''+spEsc(e.rel)+'\')">进入</button>';
+      const renameBtn = e.protected ? ''
+        : '<button class="btn-ghost btn-sm" onclick="event.stopPropagation();spPickRename(\''+spEsc(e.rel)+'\')">改名</button>';
+      const delBtn = (e.protected || e.sysdir) ? ''
+        : '<button class="btn-ghost btn-sm" style="color:#c0392b;border-color:#f3c0c2" onclick="event.stopPropagation();spPickDelete(\''+spEsc(e.rel)+'\')">删除</button>';
+      const ops = canCk ? '<div class="sp-ops">'+enterBtn+renameBtn+delBtn+'</div>'
+        : (e.protected ? '' : '<div class="sp-ops">'+renameBtn+'</div>');
       if(canCk){
-        if(canCk) _spPickPageRels.push(e.rel);
+        _spPickPageRels.push(e.rel);
         html += '<div class="sp-card'+(checked?' sel':'')+'" onclick="spCardToggle(\''+spEsc(e.rel)+'\')">'
           + '<input type="checkbox" class="sp-ck" '+(checked?'checked':'')+' onclick="event.stopPropagation();spPickToggle(\''+spEsc(e.rel)+'\',this)">'
           + '<div class="sp-thumb">📁</div>'
           + '<div class="sp-name" title="'+spEsc(e.name)+'">'+spEsc(e.name)+'</div>'
           + '<div class="sp-meta">点击选择目录</div>'
-          + '<div class="sp-enter" onclick="event.stopPropagation();spPickNav(\''+spEsc(e.rel)+'\')">进入 →</div></div>';
+          + ops + '</div>';
       }else{
         html += '<div class="sp-card sysdir" onclick="spPickNav(\''+spEsc(e.rel)+'\')">'
           + '<div class="sp-thumb">📁</div>'
           + '<div class="sp-name" title="'+spEsc(e.name)+'">'+spEsc(e.name)+'</div>'
-          + '<div class="sp-meta">'+(e.protected?'作品根（系统）':'系统产物目录')+' · 不可选</div></div>';
+          + '<div class="sp-meta">'+(e.protected?'作品根（系统）':'系统产物目录')+' · 不可选</div>'
+          + ops + '</div>';
       }
     }else{
       const isImg = IMG_EXT_RE.test(e.name), isVid = VID_EXT_RE.test(e.name);
       const isAud = AUDIO_EXT_RE.test(e.name), isTxt = TXT_EXT_RE.test(e.name);
-      const allowed = _spPickMode !== 'dir'
-        && (_spPickKinds.includes(e.kind) || (e.kind==='file' && (isImg||isVid||isAud||isTxt)));
+      const allowed = _spPickFileAllowed(e.name);
       const checked = _spPickSel.has(e.rel);
       const thumb = isImg ? '<img src="/api/space/file?path='+encodeURIComponent(e.rel)+'&inline=1" loading="lazy">'
         : isVid ? '🎬' : (isAud ? '🎵' : (isTxt ? '📝' : '📄'));
@@ -8636,6 +8716,147 @@ async function loadSpacePickList(){
   });
   grid.innerHTML = html || '<div class="empty">该目录为空</div>';
   spPickSelCount();
+}
+/* 选择器内新建文件夹：建完直接进入该目录，方便紧接着上传 */
+function spPickNewFolder(){
+  if(!_spPickCanMkdir){ toast('当前目录不能新建文件夹','warning'); return; }
+  const name = prompt('新建文件夹名称（最多两层）'); if(!name || !name.trim()) return;
+  fetch('/api/space/mkdir',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:_spPickPath, name:name.trim()})})
+    .then(r=>r.json()).then(j=>{
+      if(!j.ok){ toast(j.error||'创建失败','error'); return; }
+      _spPickPath = j.rel || ((_spPickPath?_spPickPath+'/':'')+j.name);
+      toast('已新建文件夹「'+j.name+'」，可直接上传素材','ok');
+      loadSpacePickList();
+    }).catch(()=>toast('创建失败，请重试','error'));
+}
+/* 路径 rel 是否等于 dir 或位于 dir 之内（用于改名/删除后同步选中态与当前路径） */
+function spPickPathUnder(rel, dir){
+  return rel === dir || rel.indexOf(dir + '/') === 0;
+}
+/* 选择器内重命名文件夹：与管理页同一接口，且同步选中集合与当前目录路径 */
+function spPickRename(rel){
+  const cur = rel.split('/').pop();
+  const name = prompt('重命名为', cur); if(!name || !name.trim()) return;
+  fetch('/api/space/rename',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:rel, name:name.trim()})})
+    .then(r=>r.json()).then(j=>{
+      if(!j.ok){ toast(j.error||'重命名失败','error'); return; }
+      const nw = j.rel;
+      // 选中的目录本身、或其子路径（目录模式下可能勾到子项）都要跟着改名
+      Array.from(_spPickSel).forEach(r=>{
+        if(spPickPathUnder(r, rel)){
+          const nr = nw + r.slice(rel.length);
+          _spPickSel.delete(r); _spPickSel.add(nr);
+          const k = _spPickKind[r];
+          if(k !== undefined){ _spPickKind[nr] = k; delete _spPickKind[r]; }
+        }
+      });
+      if(spPickPathUnder(_spPickPath, rel)) _spPickPath = nw + _spPickPath.slice(rel.length);
+      toast(j.synced_config ? '已重命名并同步产物目录配置' : '已重命名','ok');
+      loadSpacePickList();
+    }).catch(()=>toast('重命名失败，请重试','error'));
+}
+/* 选择器内删除文件夹：目录递归删除，同步清掉选中态；若正处在被删目录内则退回上级 */
+function spPickDelete(rel){
+  const label = rel.split('/').pop();
+  if(!confirm('确认删除文件夹「'+label+'」？其中的文件也会被删除，此操作不可恢复。')) return;
+  fetch('/api/space/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({paths:[rel]})})
+    .then(r=>r.json()).then(j=>{
+      if(!j.ok){ toast(j.error||'删除失败','error'); return; }
+      Array.from(_spPickSel).forEach(r=>{
+        if(spPickPathUnder(r, rel)){ _spPickSel.delete(r); delete _spPickKind[r]; }
+      });
+      if(spPickPathUnder(_spPickPath, rel)){
+        const i = rel.lastIndexOf('/');
+        _spPickPath = i < 0 ? '' : rel.slice(0, i);
+      }
+      toast('已删除','ok'); loadSpaceInfo(); loadSpacePickList();
+    }).catch(()=>toast('删除失败，请重试','error'));
+}
+/* 点「上传」：当前目录可直接选文件；在空间根目录时先问一个素材文件夹名，
+   选完文件后自动建目录并上传——一次交互搞定，不用退出工作区 */
+function spPickPickFiles(){
+  const inp = document.getElementById('spPickFileInput'); if(!inp) return;
+  if(_spPickPath){ _spPickPendingDir=''; inp.click(); return; }
+  if(!_spPickCanMkdir){ toast('当前目录不能新建文件夹，请进入子目录后再上传','warning'); return; }
+  const name = prompt('空间根目录不能直接放文件，先新建一个素材文件夹（可改名）', '素材');
+  if(name === null) return;
+  const nm = (name||'').trim();
+  if(!nm){ toast('文件夹名称不能为空','warning'); return; }
+  _spPickPendingDir = nm;
+  inp.click();   // 文件选择框必须在用户手势内打开，故先选文件，选完再建目录+上传
+}
+/* 选择器内上传：根目录先补建素材文件夹；成功后按类型自动勾选，省掉二次查找 */
+function spPickUpload(fileList){
+  const all = Array.from(fileList||[]);
+  if(!all.length){ _spPickPendingDir=''; return; }
+  if(_spPickPath){ spPickDoUpload(all); return; }
+  const nm = _spPickPendingDir; _spPickPendingDir='';
+  const inp = document.getElementById('spPickFileInput');
+  if(!nm){
+    if(inp) inp.value='';
+    toast('空间根目录不能直接放文件，请点「＋ 新建文件夹」或进入子目录后上传','warning');
+    return;
+  }
+  const tip = document.getElementById('spPickUploadTip');
+  if(tip) tip.textContent = '正在新建素材文件夹…';
+  fetch('/api/space/mkdir',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:'', name:nm})})
+    .then(r=>r.json()).then(j=>{
+      if(tip) tip.textContent='';
+      if(!j.ok){ if(inp) inp.value=''; toast(j.error||'创建文件夹失败','error'); return; }
+      _spPickPath = j.rel || nm;
+      toast('已新建素材文件夹「'+j.name+'」，正在上传…','ok');
+      loadSpacePickList();
+      spPickDoUpload(all);
+    }).catch(()=>{
+      if(tip) tip.textContent=''; if(inp) inp.value='';
+      toast('创建文件夹失败，请重试','error');
+    });
+}
+function spPickDoUpload(all){
+  const inp = document.getElementById('spPickFileInput');
+  const tip = document.getElementById('spPickUploadTip');
+  if(all.length > _spPickMaxFiles){
+    if(inp) inp.value=''; toast('一次最多上传 '+_spPickMaxFiles+' 个文件','warning'); return;
+  }
+  let total = 0; for(const f of all) total += f.size;
+  if(total > _spPickMaxMb*1024*1024){
+    if(inp) inp.value=''; toast('单次上传总大小不可超过 '+_spPickMaxMb+' MB','warning'); return;
+  }
+  const fd = new FormData(); fd.append('path', _spPickPath);
+  for(const f of all) fd.append('files', f, f.name);
+  if(tip) tip.textContent = '上传中… 0%';
+  const xhr = new XMLHttpRequest(); _spPickUploadXhr = xhr;
+  xhr.open('POST','/api/space/upload');
+  if(xhr.upload) xhr.upload.onprogress = e=>{
+    if(e.lengthComputable && tip) tip.textContent = '上传中… '+Math.min(99, Math.round(e.loaded/e.total*100))+'%';
+  };
+  xhr.onload = ()=>{
+    let j = {}; try{ j = JSON.parse(xhr.responseText||'{}'); }catch(_){}
+    if(tip) tip.textContent=''; if(inp) inp.value='';
+    if(!j.ok){ toast(j.error||'上传失败','error'); return; }
+    const rows = j.results||[];
+    const okRows = rows.filter(r=>r.ok), badRows = rows.filter(r=>!r.ok);
+    // 新文件 rel = 当前目录 + 后端最终文件名（重名时后端会加 (n)，必须用返回值）
+    let picked = 0;
+    okRows.forEach(r=>{
+      const rel = (_spPickPath?_spPickPath+'/':'')+r.name;
+      if(_spPickFileAllowed(r.name)){
+        _spPickSel.add(rel); _spPickKind[rel]='file'; picked++;
+      }
+    });
+    loadSpacePickList();
+    loadSpaceInfo();   // 刷新配额用量（空间页顶栏）
+    let msg = '已上传 '+okRows.length+' 个文件';
+    if(picked) msg += '，已自动勾选 '+picked+' 个';
+    if(badRows.length) msg += '；'+badRows.length+' 个失败（'+(badRows[0].error||'未知原因')+'）';
+    toast(msg, badRows.length?'warning':'ok');
+  };
+  xhr.onerror = ()=>{ if(tip) tip.textContent=''; if(inp) inp.value=''; toast('上传失败，请重试','error'); };
+  xhr.send(fd);
 }
 function spPickNav(path){ _spPickPath=path; loadSpacePickList(); }
 function spCardToggle(rel){

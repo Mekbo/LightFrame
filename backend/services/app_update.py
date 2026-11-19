@@ -31,8 +31,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.1"
-RELEASE_DATE = "2026-11-18"
+APP_VERSION = "1.0.2"
+RELEASE_DATE = "2026-11-19"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -52,10 +52,22 @@ _NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.1-wmcolor-20261118b"
+BUILD_TAG = "v1.0.2-spacepicker-20261119"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
+    {
+        "version": "1.0.2",
+        "date": RELEASE_DATE,
+        "title": "工作区空间选择器增强：上传 / 新建文件夹 / 改名 / 删除",
+        "items": [
+            "图片处理、文案生产、视频创作等工作区「从空间添加」弹窗新增「上传」按钮，可直接上传图片/视频/音频/文本素材到当前目录，上传后自动刷新并选中，免去先到我的空间上传再返回的往返",
+            "同一弹窗新增「新建文件夹」，可在当前目录下按我的空间的同名规则创建文件夹，即时刷新",
+            "文件夹卡片新增「进入 / 改名 / 删除」操作，与我的空间管理对齐：普通目录三者可用，输出目录可进入与改名但不可删除，作品根目录仅可进入",
+            "改名 / 删除后自动同步当前选中项与路径；删除当前所在目录时自动退回上级，避免停留在已不存在的路径",
+            "修正面包屑导航误用导致跳错目录的问题；素材类型判定改为按图片/视频/音频/文本扩展名严格匹配",
+        ],
+    },
     {
         "version": "1.0.1",
         "date": RELEASE_DATE,
