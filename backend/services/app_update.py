@@ -31,8 +31,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.2"
-RELEASE_DATE = "2026-11-19"
+APP_VERSION = "1.0.3"
+RELEASE_DATE = "2026-11-20"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -52,10 +52,19 @@ _NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.2-spacepicker-20261119"
+BUILD_TAG = "v1.0.3-videocrossdrive-20261120"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
+    {
+        "version": "1.0.3",
+        "date": RELEASE_DATE,
+        "title": "修复视频合成跨磁盘报错（WinError 17）",
+        "items": [
+            "修复在线合成视频时带配音 / 字幕 / 背景乐的任务在最后一步报「WinError 17 系统无法将文件移到不同的磁盘驱动器」的问题：混音成品从系统临时目录（C 盘）落到作品目录（应用安装盘，如 E 盘）时，改用跨盘安全的移动方式，同盘仍保持高效覆盖",
+            "无配音/字幕/背景乐的合成任务不受影响；修复不影响画布、转场、封面、清晰度等既有合成逻辑",
+        ],
+    },
     {
         "version": "1.0.2",
         "date": RELEASE_DATE,

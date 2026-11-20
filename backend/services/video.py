@@ -37,6 +37,7 @@
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -980,6 +981,23 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
             "bgm_volume": bgm_vol, "voice_volume": voice_vol}
 
 
+def _move_overwrite(src: str, dst: str) -> None:
+    """跨盘安全地把 src 移动并覆盖 dst。
+
+    os.replace/os.rename 在 Windows 上不能跨磁盘卷（WinError 17 / errno.EXDEV）：
+    临时目录常在 C 盘（tempfile.mkdtemp），而作品目录在应用安装盘（如 E 盘），
+    混音后的成品从临时目录落到作品目录时必然跨盘。shutil.move 会先尝试 rename，
+    失败后自动退化为「复制 + 删除」，可可靠跨盘；同盘时仍是高效 rename。
+    """
+    try:
+        os.replace(src, dst)
+    except OSError as e:
+        if getattr(e, "winerror", None) == 17 or e.errno == errno.EXDEV:
+            shutil.move(src, dst)
+        else:
+            raise
+
+
 def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
                   progress_cb=None, covers=None, scripts=None,
                   voices=None, bgm=None, user=None) -> dict:
@@ -1338,7 +1356,7 @@ def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
             mix_meta = apply_script_and_bgm(
                 ff, final, mixed, w, h, real_dur, vtpl, script,
                 voice_path, bgm_path, v, tmpdir, tag=f"g{gi}")
-            os.replace(mixed, final)
+            _move_overwrite(mixed, final)   # 临时目录(C盘)→作品目录(可能E盘)，需跨盘安全覆盖
             total_dur = real_dur
 
         outputs.append(os.path.basename(final))
