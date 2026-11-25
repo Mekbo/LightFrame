@@ -31,8 +31,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.3"
-RELEASE_DATE = "2026-11-20"
+APP_VERSION = "1.0.4"
+RELEASE_DATE = "2026-11-25"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -52,10 +52,20 @@ _NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.3-videocrossdrive-20261120"
+BUILD_TAG = "v1.0.4-videofix-20261125"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
+    {
+        "version": "1.0.4",
+        "date": RELEASE_DATE,
+        "title": "视频混剪画质与字幕体验修复（黑屏 / 字幕对齐 / 字幕样式）",
+        "items": [
+            "修复「视频+视频 / 图+视频」混剪时某些片段出现黑屏的问题：片段统一加末帧克隆兜底并精确截断到目标时长，转场不再因素材时长虚高而露黑；截取起点同时收紧，避免越过真实画面末尾",
+            "优化字幕与配音对齐：用 ffmpeg 检测配音中的真实句间停顿点，将字幕切分边界吸附过去，解决「中间几句字幕快于人声、最后一句却准」的漂移现象；检测不到停顿时自动回退原估算，不会更差",
+            "修复视频模板编辑时字幕「描边 px / 阴影 px」改成 0（无）保存后重新打开又变回默认值的问题：前端回填改用非空判断，0 作为合法值被正确保留",
+        ],
+    },
     {
         "version": "1.0.3",
         "date": RELEASE_DATE,

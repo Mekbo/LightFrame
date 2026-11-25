@@ -370,16 +370,28 @@ def _image_motion_filter(w: int, h: int, dur: float, motion: str,
 
 def _build_normalize_filter(w: int, h: int, blur_sigma: float,
                             blur: bool = True, pad_after: float = 0.0,
-                            inp: str = "[0:v]") -> str:
+                            inp: str = "[0:v]", target_dur: float = 0.0) -> str:
     """生成归一化到 w×h 的 filter_complex。
 
     blur=False（素材比例与画幅一致、能铺满）：直接缩放裁切铺满，画面锐利且无额外开销。
     blur=True（比例不一致、会留白）：背景=模糊放大填充，前景=居中 contain，绝无黑边。
     pad_after>0：短视频素材整段播完后用末帧定格补到目标时长（不循环、不重复画面）。
+    target_dur>0：末帧克隆兜底 + 精确裁切，保证输出严格等于该时长。这是防黑屏的关键——
+        探测时长偏大时 -ss 会截到内容之外导致片段变短，用末帧填满再裁到精确时长，
+        xfade 各输入才能严格等长，尾部不再露黑（参见 2026-11-25 黑屏修复）。
     inp：上游 filter 的输出标签（运镜时上游为 [mv]，否则 [0:v]）。
     """
-    tail = (f",tpad=stop_mode=clone:stop_duration={pad_after:.3f}"
-            if pad_after > 0.01 else "")
+    # 末帧克隆兜底：追加量取 pad_after / target_dur 的较大者，保证最坏情况（源没帧）也能填满
+    pad = max(float(pad_after or 0.0), float(target_dur or 0.0))
+    tail_parts = []
+    if pad > 0.01:
+        # setpts 先归零，兼容 -ss 前置 seek 后 PTS 不从 0 起的情况，避免 trim 取错区间
+        tail_parts.append("setpts=PTS-STARTPTS")
+        tail_parts.append(f"tpad=stop_mode=clone:stop_duration={pad:.3f}")
+    if target_dur > 0.01:
+        tail_parts.append(f"trim=duration={target_dur:.3f}")
+        tail_parts.append("setpts=PTS-STARTPTS")
+    tail = ("," + ",".join(tail_parts)) if tail_parts else ""
     if not blur:
         return (
             f"{inp}scale={w}:{h}:force_original_aspect_ratio=increase,"
@@ -418,7 +430,12 @@ def decide_clip_fit(src_duration: float, dur: float,
         else:
             frac = min(0.98, max(0.02, float(start_frac)))
             pos = f"随机取点 {frac * 100:.0f}%"
-        start = max(0.0, (L - dur) * frac)
+        # 起点安全余量：容器 Duration 可能比真实视频流长（VFR/音轨拉长等），
+        # 若按偏大的 L 计算，start 会越过真实内容末尾，截出来短一截、尾部露黑。
+        # 把可用起点上界收紧到 (L - dur) 的 90%，宁可少取一点也别越过内容末尾；
+        # 即使仍越界，prepare_clip 的末帧克隆兜底也会把片段补到精确 dur 秒。
+        usable = max(0.0, L - dur) * 0.90
+        start = min(max(0.0, (L - dur) * frac), usable)
         return {"mode": "trim", "start": round(start, 3), "pad": 0.0,
                 "src_duration": round(L, 2),
                 "label": f"素材 {L:.1f}s ≥ 每段 {dur:.1f}s → {pos}，从 {start:.1f}s 起截取 {dur:.1f}s"}
@@ -454,7 +471,8 @@ def prepare_clip(src: str, is_video: bool, w: int, h: int, dur: float,
             inp = "[mv]"          # 运镜输出作为归一化输入
             blur = False          # 运镜已铺满，无需模糊填充
     vf = _build_normalize_filter(w, h, blur_sigma, blur,
-                                 pad_after=float(fit.get("pad", 0.0)), inp=inp)
+                                 pad_after=float(fit.get("pad", 0.0)), inp=inp,
+                                 target_dur=dur)
     parts.append(vf)
     vf_full = ";".join(parts)
     cmd = [ff, "-y"]
@@ -479,7 +497,7 @@ def prepare_clip(src: str, is_video: bool, w: int, h: int, dur: float,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         out,
     ]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+    _run_ff(cmd, 600, ff, tmpdir, "clip_" + (tag or "seg"))
     return out
 
 
@@ -830,6 +848,81 @@ def _segment_and_time(text: str) -> Tuple[List[str], List[Tuple[float, float]], 
     return blocks, spans, t
 
 
+def _detect_voice_pauses(ff: str, voice_path: str, max_dur: float) -> List[float]:
+    """检测配音音频中的真实句间停顿点（静音段中点，单位秒）。
+
+    TTS 配音在句/逗号处通常有可测量的停顿；把它作为字幕切块的锚点，可消除
+    「按字数估算 + 全局线性缩放」造成的中间漂移（首尾因缩放锚定所以看着准，
+    中间逐句累积误差 → 字幕早于人声）。
+
+    失败（无 ffmpeg / 音频损坏 / 无静音段）时返回空列表，调用方回退估算逻辑。
+    """
+    try:
+        cmd = [ff, "-hide_banner", "-nostats", "-i", voice_path,
+               "-af", "silencedetect=noise=-35dB:d=0.15", "-f", "null", "-"]
+        p = subprocess.run(cmd, capture_output=True, timeout=180)
+        err = (p.stderr or b"").decode("utf-8", "replace")
+        starts = [float(x) for x in re.findall(r"silence_start:\s*([0-9.]+)", err)]
+        ends = [float(x) for x in re.findall(r"silence_end:\s*([0-9.]+)", err)]
+        mids = []
+        for i, st in enumerate(starts):
+            if i >= len(ends):
+                break
+            en = ends[i]
+            mid = (st + en) / 2.0
+            # 过滤片头/片尾静音与过短停顿（字间气口不算句间边界）
+            if 0.25 <= mid <= max_dur - 0.35 and (en - st) >= 0.15:
+                mids.append(round(mid, 3))
+        return mids
+    except Exception:
+        return []
+
+
+def _snap_spans_to_pauses(spans: List[Tuple[float, float]], pauses: List[float],
+                          show_dur: float) -> List[Tuple[float, float]]:
+    """把字幕块内部边界吸附到最近的真实停顿点。
+
+    - 首尾锚定：第一块从 0 开始、最后一块到 show_dur（配音真实时长）结束；
+    - 单调约束：吸附后的边界严格递增，且相邻块至少 min_gap 秒，杜绝重叠/倒挂；
+    - 容差约束：仅在估算边界附近 tol 秒内吸附，避免把边界拉到很远反而更糟；
+    - 部分吸附：静音点数与块数不必相等，能吸附几个就吸附几个，其余保留估算值。
+    """
+    n = len(spans)
+    if n < 2 or not pauses:
+        return spans
+    avg = show_dur / n
+    tol = max(0.5, min(2.5, avg * 0.75))
+    min_gap = min(0.35, avg * 0.3)
+    bounds = [0.0]          # 边界列表：b[0]=0，b[i]=第 i 块的 start，b[-1]=show_dur
+    used = set()
+    prev = 0.0
+    for i in range(n - 1):
+        est = spans[i][1]   # 该块估算的结束点 = 下一块的起始边界
+        best, best_d = None, tol + 1.0
+        for j, p in enumerate(pauses):
+            if j in used or p <= prev + min_gap or p > show_dur - min_gap:
+                continue
+            d = abs(p - est)
+            if d < best_d:
+                best_d, best = d, j
+        if best is not None and best_d <= tol:
+            used.add(best)
+            nb = pauses[best]
+        else:
+            nb = est        # 容差内无可用停顿点 → 保留估算边界
+        nb = max(nb, prev + min_gap)
+        bounds.append(round(nb, 3))
+        prev = nb
+    bounds.append(show_dur)
+    out = []
+    for i in range(n):
+        st, en = bounds[i], bounds[i + 1]
+        if en <= st:        # 极端兜底（正常已被单调约束排除）
+            en = min(show_dur, st + min_gap)
+        out.append((round(st, 3), round(en, 3)))
+    return out
+
+
 def _segment_subtitle(text: str) -> List[str]:
     """[_segment_and_time 的薄包装] 仅返回字幕块纯文本（末尾不含标点）。"""
     return _segment_and_time(text)[0]
@@ -896,6 +989,19 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
             # 估算异常兜底：均分
             per = show_dur / n
             spans = [(i * per, (i + 1) * per) for i in range(n)]
+        # 真实停顿点吸附：配音在句/逗号处有可测停顿时，用它们校正字幕切块边界，
+        # 消除「按字数估算 + 全局缩放」造成的中间逐句漂移（首尾仍锚定）。
+        # 只有 >=2 块、且有配音文件才尝试；检测失败/点数不足时保留上面的估算 spans。
+        align = "estimate"
+        if n >= 2 and voice_path and os.path.exists(voice_path) and voice_dur > 0.05:
+            pauses = _detect_voice_pauses(ff, voice_path, show_dur)
+            # 至少要有 1 个可用停顿点才吸附，避免无意义调用
+            if pauses:
+                snapped = _snap_spans_to_pauses(spans, pauses, show_dur)
+                # 仅当吸附产生了实际变化才采用（静音点过少/过远时不打扰原逻辑）
+                if snapped != spans:
+                    spans = snapped
+                    align = "pause_snap"
         for line, (st, en) in zip(blocks, spans):
             p = os.path.join(tmpdir, f"txt_{tag}_{len(layers)}.png")
             render_text_png(sub_style, line, w, h, p)
@@ -973,12 +1079,38 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
     return {"source": script.get("source", "manual"),
             "template": tpl.get("name") or "内置默认模板",
             "subtitle_lines": len(lines),
+            "subtitle_align": align,
             "subtitle_text": str(script.get("subtitle") or "")[:120],
             "title": title_text[:60],
             "voice_duration": round(voice_dur, 2),
             "subtitle_duration": round(show_dur, 2),
             "subtitle_timeline": timeline,
             "bgm_volume": bgm_vol, "voice_volume": voice_vol}
+
+
+def _run_ff(cmd: list, timeout: int, ff: str, tmpdir: str, tag: str) -> None:
+    """执行 ffmpeg 命令；失败时把 stderr 写入临时目录日志并抛出带摘要的错误。
+
+    历史问题：所有 ffmpeg 调用都用 capture_output=True 吞掉日志，一旦失败只能看到
+    "CalledProcessError"，无法判断是源素材损坏、时间戳异常还是滤镜参数问题。
+    这里在失败时保留最后一段 stderr（写入 tmpdir/ffmpeg_err_<tag>.log，任务失败会
+    清理 tmpdir，故同时把摘要放进异常消息，便于前端/日志定位）。
+    """
+    p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    if p.returncode != 0:
+        err = (p.stderr or b"").decode("utf-8", "replace")
+        try:
+            log = os.path.join(tmpdir, f"ffmpeg_err_{tag}.log")
+            with open(log, "w", encoding="utf-8") as f:
+                f.write("COMMAND:\n" + " ".join(str(x) for x in cmd) + "\n\nSTDERR:\n" + err)
+        except Exception:
+            pass
+        # 取最后若干行里含 error/invalid/cannot 等关键字的摘要
+        lines = [ln.strip() for ln in err.splitlines() if ln.strip()]
+        key = [ln for ln in lines if any(k in ln.lower()
+               for k in ("error", "invalid", "cannot", "no such", "failed", "unable"))]
+        brief = (key[-3:] if key else lines[-6:])
+        raise RuntimeError("ffmpeg 处理失败 [%s]: %s" % (tag, " | ".join(brief)[:500]))
 
 
 def _move_overwrite(src: str, dst: str) -> None:
@@ -1306,7 +1438,7 @@ def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
             cmd += ["-filter_complex", fc, "-map", "[vout]", "-an", "-r", "30",
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                     "-pix_fmt", "yuv420p", "-movflags", "+faststart", main_path]
-            subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+            _run_ff(cmd, 900, ff, tmpdir, f"xfade_g{gi + 1}")
 
         # 片头定格封面：现成封面图优先（每条一张、互不重复）；否则按关键帧抽帧。
         # 两种来源都「合入视频」，不再单独导出 jpg。

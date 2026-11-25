@@ -4467,9 +4467,10 @@ function fillVtStyle(p,s){
     size:Math.round(((s.size_ratio)||(d.size/100))*200)/2,
     x:Math.round(((s.pos&&s.pos.x!=null)?s.pos.x:d.x/100)*100),
     y:Math.round(((s.pos&&s.pos.y!=null)?s.pos.y:d.y/100)*100),
-    stroke:(s.stroke&&s.stroke.width)||d.stroke,
+    // 注意：描边/阴影的 0 表示「无」，是合法值，不能用 || 回退（0 会被当假值覆盖成默认值）
+    stroke:(s.stroke&&s.stroke.width!=null)?s.stroke.width:d.stroke,
     stroke_color:normHex((s.stroke&&s.stroke.color)||d.stroke_color),
-    shadow:(s.shadow&&s.shadow.width)||d.shadow,
+    shadow:(s.shadow&&s.shadow.width!=null)?s.shadow.width:d.shadow,
     shadow_color:normHex((s.shadow&&s.shadow.color)||d.shadow_color),
     opacity:Math.round((s.opacity||1)*100)};
   Object.keys(m).forEach(k=>vtS(p,k,m[k]));
