@@ -391,6 +391,11 @@
   .task-meta span{padding:1px 8px;border-radius:20px;background:#f3f6fb;white-space:nowrap}
   .task-meta .tm-queue{background:#fff1d6;color:#a26200;font-weight:700}
   .task-meta .tm-dl{background:#e9f3ff;color:#1558a8}
+  /* 成品质检徽标 */
+  .task-meta .tm-qc{cursor:help}
+  .task-meta .tm-qc.qc-ok{background:#e7f7ed;color:#1a7a3c}
+  .task-meta .tm-qc.qc-warn{background:#fff0e6;color:#b5510a;font-weight:700}
+  .task-meta .tm-qc.qc-muted{background:#eef0f3;color:#7a8699}
   /* 全局排队提示条：并发基准 + 我的排队数 + 「前面有 xx 位排队」 */
   .queue-bar{margin:0 0 10px;padding:9px 12px;border:1px solid #f0d6a0;border-radius:10px;background:linear-gradient(90deg,#fff7e6,#fffdf7);font-size:calc(12px * var(--fs));color:#8a5a12}
   .queue-bar .qb-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -1833,6 +1838,17 @@
         <div class="vsec">⑨ 原创度检验与提交</div>
         <div class="vstat" id="vStat"></div>
         <div class="hint" id="v_orig_hint">原创度校验：每次成品视频原创度需 &gt;50%（按素材使用时长计算，跨任务复用 K=2）；不达标将提示原因并停止。</div>
+        <!-- 合成预设：一键复用九步参数，不保存素材/脚本 -->
+        <div class="vpreset" style="margin-top:12px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;background:#fbfcfe">
+          <div style="font-weight:700;font-size:calc(12px*var(--fs));margin-bottom:8px">⚡ 合成预设 <span class="hint" style="font-weight:400">（只保存画布/时长/转场/样式等参数，不含素材与文案）</span></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="v_preset" class="need-login" style="flex:1;min-width:180px"><option value="">— 选择已保存的预设 —</option></select>
+            <button class="btn-ghost btn-sm need-login" onclick="applyVideoPreset()">载入</button>
+            <button class="btn-ghost btn-sm need-login" onclick="delVideoPreset()">删除</button>
+            <button class="btn-ghost btn-sm need-login" onclick="openSavePreset()">保存当前参数…</button>
+          </div>
+          <div class="hint" id="v_preset_msg" style="margin-top:6px"></div>
+        </div>
         <button class="btn-gold need-login" style="width:100%;margin-top:12px" onclick="startVideoTask()">▶ 开始合成视频</button>
       </div>
     </div>
@@ -2747,10 +2763,47 @@
       <b id="pvTaskTitle">成品预览</b>
       <span class="pv-box-acts">
         <button class="lnk" id="pvRerollBtn" onclick="rerollPreview()" title="再随机换 2 个样例">换一批</button>
+        <button class="lnk" id="pvSubBtn" onclick="openSubtitleEditor(window.__pvTid||'', window.__pvIdx||0)" style="display:none" title="微调字幕出现时间，只重烧字幕不重合成视频">字幕微调</button>
         <button class="lnk danger" onclick="closeTaskPreview()">✕ 关闭</button>
       </span>
     </div>
     <div class="pv-box-body" id="pvModalBody"></div>
+  </div>
+</div>
+
+<!-- 保存合成预设：输入名称 -->
+<div class="auth-overlay" id="savePresetOverlay" style="display:none" onclick="if(event.target===this)closeSavePreset()">
+  <div class="auth-card" style="width:min(380px,92vw)">
+    <h3 style="margin-top:0">保存合成预设</h3>
+    <div class="hint" style="margin-bottom:8px">保存当前所有合成参数（画布、时长、转场、字幕样式引用、音量等），下次一键载入。不会保存素材与文案。</div>
+    <input type="text" id="v_preset_name" maxlength="60" placeholder="给这套参数起个名字，如：竖屏9:16-30秒-瓷砖口播" style="width:100%;box-sizing:border-box">
+    <div class="pv-actions" style="justify-content:flex-end">
+      <button class="btn-ghost btn-sm" onclick="closeSavePreset()">取消</button>
+      <button class="btn-gold btn-sm" onclick="doSavePreset()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 字幕时间轴微调：编辑每块起止时间，只重烧字幕 -->
+<div class="auth-overlay" id="subtitleEditorOverlay" style="display:none" onclick="if(event.target===this)closeSubtitleEditor()">
+  <div class="pv-box" style="max-width:min(820px,94vw)">
+    <div class="pv-box-head">
+      <b id="subEditorTitle">字幕时间轴微调</b>
+      <span class="pv-box-acts">
+        <button class="lnk" onclick="sbShiftAll(-0.3)">整体提前0.3s</button>
+        <button class="lnk" onclick="sbShiftAll(0.3)">整体延后0.3s</button>
+        <button class="lnk danger" onclick="closeSubtitleEditor()">✕ 关闭</button>
+      </span>
+    </div>
+    <div class="pv-box-body" style="display:block">
+      <div class="hint" style="margin-bottom:10px">直接改每句字幕的「起点 / 终点」（秒），或整体平移。保存后只重烧字幕画面，<b>不重新合成视频、不重复混音</b>。模板样式仍以模板中心当前设置为准。</div>
+      <div id="sbVideoWrap" style="margin-bottom:12px"></div>
+      <div id="sbRows"></div>
+      <div class="pv-actions" style="justify-content:flex-end;margin-top:12px">
+        <button class="btn-ghost btn-sm" onclick="closeSubtitleEditor()">取消</button>
+        <button class="btn-gold btn-sm" id="sbSaveBtn" onclick="saveSubtitleTimeline()">保存并重烧字幕</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2963,6 +3016,7 @@ let videoLocalDirHandle = null;   // 视频产物点选的本地文件夹（各�
 const taskCards = {};
 const handledDone = new Set();   // 已触发过完成通知的任务（避免重复弹窗/重复下载）
 const historicalIds = new Set(); // 页面加载时已存在的任务（不重复弹通知）
+const reburnWatch = new Set();   // 已提交、正在等后台重烧完成的任务（完成后单独提示一次）
 let cfgCache = {};
 let allTasks = [];               // 最近一次拉取的全部任务（用于分页）
 let etaCache = {};               // 每个运行任务的「估算总时长」缓存（按 percent 变化刷新）
@@ -4035,6 +4089,142 @@ function collectVideoConfig(){
     }
   };
 }
+
+/* ---------- 合成预设（只存参数，按用户隔离） ---------- */
+function presetMsg(txt, isErr){ const e=document.getElementById('v_preset_msg'); if(e){e.textContent=txt||'';e.style.color=isErr?'#c0392b':'';} }
+async function loadVideoPresets(){
+  if(isGuest()) return;
+  try{
+    const r=await fetch('/api/presets'); const j=await r.json().catch(()=>({}));
+    const sel=document.getElementById('v_preset'); if(!sel) return;
+    const cur=sel.value;
+    sel.innerHTML='<option value="">— 选择已保存的预设 —</option>';
+    (j.data||[]).forEach(p=>{
+      const o=document.createElement('option'); o.value=p.id;
+      o.textContent=p.name+(p.summary?('（'+p.summary+'）'):''); sel.appendChild(o);
+    });
+    sel.value=cur;
+  }catch(e){}
+}
+function openSavePreset(){ const i=document.getElementById('v_preset_name'); if(i)i.value=''; const o=document.getElementById('savePresetOverlay'); if(o)o.style.display='flex'; }
+function closeSavePreset(){ const o=document.getElementById('savePresetOverlay'); if(o)o.style.display='none'; }
+async function doSavePreset(){
+  const name=((document.getElementById('v_preset_name')||{}).value||'').trim();
+  if(!name){ toast('请填写预设名称','error'); return; }
+  try{
+    const r=await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name,config:collectVideoConfig()})});
+    const j=await r.json().catch(()=>({}));
+    if(!j.ok){ toast('保存失败：'+((j.error&&j.error.message)||j.error||'未知原因'),'error'); return; }
+    closeSavePreset(); await loadVideoPresets(); presetMsg('已保存预设「'+name+'」'); toast('预设已保存','ok');
+  }catch(e){ toast('保存失败：'+(e.message||e),'error'); }
+}
+async function applyVideoPreset(){
+  const pid=(document.getElementById('v_preset')||{}).value||'';
+  if(!pid){ toast('请先选择预设','info'); return; }
+  try{
+    const r=await fetch('/api/presets/'+encodeURIComponent(pid)); const j=await r.json().catch(()=>({}));
+    if(!j.ok){ toast('载入失败：'+((j.error&&j.error.message)||j.error||'未知'),'error'); return; }
+    const v=(((j.data||{}).config)||{}).video||{};
+    const set=(id,val)=>{const e=document.getElementById(id); if(e && val!==undefined && val!==null) e.value=val;};
+    set('v_aspect',v.aspect); set('v_res',v.resolution); set('v_dur_strategy',v.duration_strategy);
+    set('v_target',v.target_duration); set('v_clip',v.clip_duration); set('v_tdur',v.transition_duration);
+    set('v_blur',v.blur_sigma); set('v_cover',v.cover); set('v_cover_dur',v.cover_duration);
+    set('v_count',v.video_count); set('v_mix_mode',v.mix_mode); set('v_short_mode',v.short_video_mode);
+    set('v_reshuffle',v.reshuffle?'1':'0'); set('v_motion',v.motion);
+    set('v_voice_vol',Math.round((v.voice_volume!==undefined?v.voice_volume:1)*100));
+    set('v_bgm_vol',Math.round((v.bgm_volume!==undefined?v.bgm_volume:0.2)*100));
+    set('v_bgm_fade',v.bgm_fade);
+    if(Array.isArray(v.transitions)){ fxSelected=new Set(v.transitions.map(String)); if(typeof renderFx==='function') renderFx(); }
+    // 模板样式仍以模板中心为准：仅当该模板仍存在时才选中，否则提示
+    if(v.template_id){ const sel=document.getElementById('v_template');
+      const opt=sel && Array.from(sel.options).find(o=>o.value===v.template_id);
+      if(opt) sel.value=v.template_id; else presetMsg('原模板已不存在，字幕样式请重新选择',true);
+    }
+    if(typeof syncVtLabels==='function'){ ['sub','title'].forEach(p=>{ if(typeof syncVtLabels==='function') try{syncVtLabels(p);}catch(e){} }); }
+    presetMsg('已载入预设「'+(j.data.name||'')+'」，请核对各步骤参数'); toast('预设已载入','ok');
+  }catch(e){ toast('载入失败：'+(e.message||e),'error'); }
+}
+async function delVideoPreset(){
+  const pid=(document.getElementById('v_preset')||{}).value||'';
+  if(!pid){ toast('请先选择预设','info'); return; }
+  if(!confirm('确定删除这个合成预设？仅删除参数配置，不影响任何素材。')) return;
+  try{
+    const r=await fetch('/api/presets/'+encodeURIComponent(pid),{method:'DELETE'});
+    const j=await r.json().catch(()=>({}));
+    if(!j.ok){ toast('删除失败：'+((j.error&&j.error.message)||j.error||'未知'),'error'); return; }
+    await loadVideoPresets(); presetMsg('预设已删除'); toast('已删除','ok');
+  }catch(e){ toast('删除失败：'+(e.message||e),'error'); }
+}
+
+/* ---------- 字幕时间轴微调（只重烧字幕） ---------- */
+let sbCtx={tid:'',idx:0,timeline:[],outputUrl:''};
+function openSubtitleEditor(tid, idx){
+  const t=allTasks.find(x=>x.id===tid)||{};
+  const v=(((t.meta||{}).videos)||[])[idx]||{};
+  const tl=(v.script||{}).subtitle_timeline||[];
+  if(!tl.length){ toast('该成品没有可微调的字幕','info'); return; }
+  if(!(v.script||{}).reburn_ready){ toast('该任务缺少无字幕底片，无法只重烧字幕（请重新合成）','info'); return; }
+  sbCtx={tid:tid, idx:idx, timeline:tl.map(x=>({start:+x.start||0,end:+x.end||0,text:x.text||''})),
+         outputUrl:'/api/output/'+encodeURIComponent((t.outputs||[])[idx]||'')+'?tid='+encodeURIComponent(tid)};
+  const title=document.getElementById('subEditorTitle'); if(title) title.textContent='字幕微调 · '+(tid)+' · 第'+(idx+1)+'条';
+  const wrap=document.getElementById('sbVideoWrap');
+  if(wrap) wrap.innerHTML='<video controls playsinline preload="metadata" style="max-width:100%;max-height:38vh;border-radius:8px" src="'+sbCtx.outputUrl+'"></video>';
+  renderSbRows();
+  const o=document.getElementById('subtitleEditorOverlay'); if(o)o.style.display='flex';
+}
+function closeSubtitleEditor(){
+  const wrap=document.getElementById('sbVideoWrap'); if(wrap) wrap.querySelectorAll('video').forEach(v=>v.pause());
+  const o=document.getElementById('subtitleEditorOverlay'); if(o)o.style.display='none';
+}
+function renderSbRows(){
+  const box=document.getElementById('sbRows'); if(!box) return;
+  box.innerHTML=sbCtx.timeline.map((x,i)=>
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;flex-wrap:wrap">'+
+      '<b style="min-width:26px;color:var(--blue)">'+(i+1)+'</b>'+
+      '<span style="flex:1;min-width:120px;font-size:calc(12px*var(--fs))">'+escHtml(x.text)+'</span>'+
+      '起点 <input type="number" step="0.1" min="0" value="'+x.start+'" data-i="'+i+'" data-k="start" style="width:76px" onchange="sbEdit(this)">'+
+      '终点 <input type="number" step="0.1" min="0" value="'+x.end+'" data-i="'+i+'" data-k="end" style="width:76px" onchange="sbEdit(this)">'+
+    '</div>').join('');
+}
+function sbEdit(el){
+  const i=+el.getAttribute('data-i'), k=el.getAttribute('data-k');
+  const val=parseFloat(el.value); if(isNaN(val)) return;
+  sbCtx.timeline[i][k]=val;
+}
+function sbShiftAll(delta){
+  sbCtx.timeline.forEach(x=>{ x.start=Math.max(0,+(x.start+delta).toFixed(2)); x.end=+(x.end+delta).toFixed(2); });
+  renderSbRows();
+}
+function escHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function saveSubtitleTimeline(){
+  const btn=document.getElementById('sbSaveBtn');
+  if(btn && btn.disabled) return;                 // 防重复点击
+  const setBusy=(on,txt)=>{ if(!btn)return; btn.disabled=on;
+    btn.textContent=txt; btn.style.opacity=on?'.6':''; };
+  setBusy(true,'提交中…');
+  const tid=sbCtx.tid;
+  try{
+    const r=await fetch('/api/tasks/'+encodeURIComponent(tid)+'/subtitle/reburn',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({output_index:sbCtx.idx,timeline:sbCtx.timeline})});
+    const j=await r.json().catch(()=>({}));
+    if(!j.ok){
+      setBusy(false,'保存并重烧字幕');              // 校验失败：恢复按钮，留在编辑器里改
+      toast('重烧失败：'+((j.error&&j.error.message)||j.error||'未知'),'error'); return;
+    }
+    // 已提交后台：登记监视，交给任务卡片显示排队/进度/完成状态
+    reburnWatch.add(tid);
+    closeSubtitleEditor();                         // 立即关闭，用户可在任务卡片看进度
+    toast('已提交字幕重烧，可在任务卡片查看进度', 'ok');
+    setBusy(false,'保存并重烧字幕');
+    await pollTasks();                             // 立刻拉一次，卡片进入「排队中」
+  }catch(e){
+    setBusy(false,'保存并重烧字幕');
+    toast('重烧失败：'+(e.message||e),'error');
+  }
+}
+
 /* ---------- 视频任务提交：上传阶段可见化 ----------
    后端要收完整个 multipart 才会注册任务，多个视频素材体积大时，
    「点提交 → 任务出现在列表」之间会有一段空窗。这里先插入本地占位卡片并显示
@@ -4613,6 +4803,7 @@ renderScriptGrid();
 renderBgmList();
 initVideoTemplatePanel();
 loadVideoTemplates();
+loadVideoPresets();
 updateVStat();
 
 /* ---------- 文案生产：①选题 → ②脚本 → ③配音 → ④封面 → ⑤素材包 ---------- */
@@ -6021,6 +6212,35 @@ async function startTask(){
   }catch(e){ alert('提交失败：'+e); }
 }
 
+/* 成品质检徽标：黑段告警 / 字幕对齐方式提示。数据来源 t.qc 与 t.meta.videos[].script */
+function updateQcBadge(t){
+  const el=document.getElementById('qc-'+t.id);
+  if(!el) return;
+  if(!isDoneLike(t) || t._upload){ el.style.display='none'; return; }
+  const qc=t.qc||{};
+  const outs=qc.outputs||[];
+  const warns=outs.filter(x=>x && x.status==='warn');
+  const aligns=[];
+  (((t.meta||{}).videos)||[]).forEach(v=>{const a=((v||{}).script||{}).subtitle_align; if(a) aligns.push(a);});
+  let cls='qc-ok', text='✓ 质检通过', tip='画面与时长检测正常';
+  if(warns.length){
+    cls='qc-warn'; text='⚠ 质检提醒';
+    tip=warns.map((w,i)=>'成品'+(i+1)+'：'+(w.note||'疑似黑屏')).join('\n');
+  }else if(qc.status==='unknown'){
+    cls='qc-muted'; text='质检跳过'; tip='本次未做画面质检';
+  }
+  if(aligns.length && aligns.indexOf('estimate')>=0){
+    text+=' · 字幕估算'; tip+='\n字幕按估算对齐（未检测到停顿点），如有个别不同步可用「字幕微调」调整';
+  }else if(aligns.length && aligns.every(a=>a==='pause_snap'||a==='manual')){
+    text+=' · 字幕已校准';
+  }
+  el.className='tm-qc '+cls;
+  el.textContent=text;
+  el.title=tip;
+  el.style.display='';
+}
+function isDoneLike(t){ return t && (t.status==='done'||t.status==='cancelled'); }
+
 function ensureCard(tid){
   let card = taskCards[tid];
   if(card) return card;
@@ -6051,6 +6271,7 @@ function ensureCard(tid){
       <span class="tm-date" id="date-${tid}" title="任务创建日期"></span>
       <span class="tm-dl" id="dl-${tid}" title="在线用户打包下载该任务产物的次数；本机「打开目录」不计入"></span>
       <span class="tm-queue" id="queue-${tid}" title="全局先进先出队列位次"></span>
+      <span class="tm-qc" id="qc-${tid}" style="display:none"></span>
     </div>`;
   taskCards[tid]=card;
   return card;
@@ -6063,11 +6284,14 @@ function updateCard(t){
   // 状态：文字描述（排队中 / 处理中 / 已暂停 / 完成 / 已取消），不再用进度条
   const tag=document.getElementById('tag-'+tid);
   if(tag){
+    // 字幕重烧是原任务的二次操作：运行中显示重烧阶段，不套用「处理中」
+    const reb = !!t.reburn_running;
     tag.textContent = isDone?'完成'
       :(isCancel?'已取消'
       :(isPaused?'已暂停'
       :(isFailed?'失败'
-      :(t.status==='running'?'处理中':(t.stage||'准备中')))));
+      :(t.status==='running'?(reb?'字幕重烧中':'处理中')
+      :(reb?(t.stage||'字幕重烧排队中'):(t.stage||'准备中'))))));
     tag.className='tag'+(isDone?' done':(isCancel?' cancel':(isPaused?' pause':(isFailed?' fail':''))));
     tag.title = isFailed ? (t.stage||'处理失败') : '';
   }
@@ -6107,6 +6331,8 @@ function updateCard(t){
   // 有成品即可预览（本机与局域网通用，进行中也能预览已生成的部分）
   const pbtn=document.getElementById('prev-'+tid);
   if(pbtn) pbtn.style.display = ((t.outputs||[]).length>0 && !t._upload) ? '' : 'none';
+  // 成品质检提示：黑段 / 字幕对齐方式（仅提示，不影响产物）
+  updateQcBadge(t);
   // 共处理 X 张图：完成后取产物数，进行中取已处理数，排队中取总数
   const outs=t.outputs||[];
   const n = outs.length ? outs.length : (t.processed || t.total || 0);
@@ -6328,18 +6554,59 @@ function openTaskPreview(data, tid){
     (t.label||('任务 '+tid))+' · '+kindName+' · 共 '+data.total+' 个成品';
   const body=document.getElementById('pvModalBody');
   body.innerHTML='';
+  let firstVideoIdx=-1;
   (data.items||[]).forEach(it=>{
     if(it.type==='video'){
       const v=document.createElement('video');
       v.controls=true; v.preload='metadata'; v.src=it.url; v.playsInline=true;
       v.title=it.name;
       body.appendChild(v);
+      if(firstVideoIdx<0){
+        // 由预览文件名反查这是第几个成品（outputs 与 meta.videos 同序）
+        const outs=t.outputs||[];
+        let found=outs.indexOf(it.name);
+        if(found<0){
+          try{ const u=new URL(it.url,location.href); const n=u.searchParams.get('name')||decodeURIComponent(u.pathname.split('/').pop()||'');
+            found=outs.findIndex(o=>o===n||decodeURIComponent(o)===n); }catch(e){}
+        }
+        if(found<0) found=0;
+        firstVideoIdx=found;
+      }
     }else{
       const im=document.createElement('img');
       im.src=it.url; im.alt=it.name; im.loading='lazy'; im.title=it.name;
       body.appendChild(im);
     }
   });
+  // 字幕微调按钮：视频任务始终可见；无底片/无时间轴时灰掉并说明原因（旧任务不再凭空消失）
+  window.__pvIdx=firstVideoIdx;
+  const sbBtn=document.getElementById('pvSubBtn');
+  if(sbBtn){
+    const sc=firstVideoIdx>=0 ? ((((t.meta||{}).videos||[])[firstVideoIdx]||{}).script||{}) : {};
+    const isVideo=(t.kind||data.kind)==='video' && firstVideoIdx>=0;
+    const hasMaster=!!sc.reburn_ready;               // 合成时保留的无字幕底片
+    const hasTl=((sc.subtitle_timeline)||[]).length>0;
+    const isReburning=!!t.reburn_running;             // 后台重烧进行中：锁定，禁止重复微调
+    if(!isVideo){
+      sbBtn.style.display='none'; sbBtn.onclick=null; // 图片 / Live 任务无字幕微调需求
+    }else if(isReburning){
+      const why='该成品正在重烧中，请等待任务结束后再微调';
+      sbBtn.style.display=''; sbBtn.className='lnk gray'; sbBtn.style.cursor='not-allowed';
+      sbBtn.title=why;
+      sbBtn.onclick=function(){ toast(why,'info'); };
+    }else if(hasMaster && hasTl){
+      sbBtn.style.display=''; sbBtn.className='lnk'; sbBtn.style.cursor='';
+      sbBtn.title='微调字幕出现时间，只重烧字幕不重合成视频';
+      sbBtn.onclick=function(){ openSubtitleEditor(window.__pvTid||'', window.__pvIdx||0); };
+    }else{
+      const why=!hasMaster
+        ? '该任务在字幕微调功能上线前合成，未保留无字幕底片；请重新合成一条视频后即可微调'
+        : '该成品没有字幕时间轴，无法微调';
+      sbBtn.style.display=''; sbBtn.className='lnk gray'; sbBtn.style.cursor='not-allowed';
+      sbBtn.title=why;
+      sbBtn.onclick=function(){ toast(why,'info'); }; // 点击也给出原因，不只靠 hover
+    }
+  }
   const ov=document.getElementById('previewOverlay');
   if(ov) ov.style.display='flex';
 }
@@ -6392,7 +6659,9 @@ async function retryTask(tid){
     const r=await fetch('/api/tasks/'+encodeURIComponent(tid)+'/retry',{method:'POST'});
     const j=await r.json().catch(()=>({}));
     if(j.ok){
-      toast('任务 '+tid+' 已重新排队，将沿用原素材与配置继续执行','ok');
+      // 字幕重烧的重试：登记监视，提示语对应「重新重烧」而非整段合成
+      if(j.op==='reburn'){ reburnWatch.add(tid); toast('字幕重烧已重新排队','ok'); }
+      else toast('任务 '+tid+' 已重新排队，将沿用原素材与配置继续执行','ok');
       handledDone.delete(tid);            // 允许重试成功后再触发一次完成通知
       await pollTasks();
     }else{
@@ -6437,6 +6706,20 @@ async function pollTasks(){
     for(const pid of Object.keys(uploadPlaceholders)) allTasks.unshift(uploadPlaceholders[pid]);
     // 检测本次新完成的任务 → 通知一次（全局，不受分页影响）
     for(const t of allTasks){
+      // 字幕重烧监视独立于 handledDone：重烧复用原任务 tid，首次合成时已登记 handledDone，
+      // 因此不能放在下面的 done 分支里，否则重烧完成永远不会提示。
+      if(reburnWatch.has(t.id) && (t.status==='done' || t.status==='failed')){
+        reburnWatch.delete(t.id);
+        if(t.status==='done'){
+          toast('字幕重烧完成，预览已更新', 'ok');
+          if(window.__pvTid===t.id && typeof previewTask==='function'){
+            document.getElementById('previewOverlay').style.display='none';
+            setTimeout(()=>previewTask(t.id), 300);
+          }
+        }else{
+          toast('字幕重烧失败：'+(t.log||t.stage||'未知'),'error');
+        }
+      }
       if(t.status==='done' && !handledDone.has(t.id)){
         handledDone.add(t.id);
         if(!historicalIds.has(t.id)){ await onTaskDone(t); }
@@ -6597,7 +6880,7 @@ async function restoreTasks(){
 
 async function saveToLocalDir(name, handle, tid){
   if(!handle) return;
-  // 带 tid 精确定位：多个视频任务都叫「合成视频.mp4」，按名字搜会串文件
+  // 带 tid 精确定位：多个视频任务成品名可能相近，按名字搜会串文件
   const url = '/api/output/'+encodeURIComponent(name) + (tid ? '?tid='+encodeURIComponent(tid) : '');
   const r = await fetch(url);
   const blob = await r.blob();
@@ -7809,6 +8092,7 @@ async function bootstrap(){
   // 开机即统一加载模板中心数据：图片/视频模板下拉、封面模板下拉、素材包下拉、
   // 各 AI 入口提示词选择器全部自动填充，刷新后回到上次位置时数据也是最新的。
   await refreshAllTemplateViews();
+  loadVideoPresets();           // 合成预设：登录后按当前用户加载（游客自动跳过）
   restoreLastView();            // 刷新后回到上次操作的位置（不再固定跳「格式转换」）
   if(!menuStateLoaded) applyMenuGroups(null);  // 首次使用：视图恢复后只展开「当前所在分组」
   loadDevContact();            // 开发者微信联系方式（公开只读，游客也能看）

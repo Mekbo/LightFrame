@@ -284,6 +284,16 @@ def probe_duration(ff: str, path: str) -> float:
         return 0.0
 
 
+def probe_has_audio(ff: str, path: str) -> bool:
+    """探测文件是否含音频流（微调重烧时判断能否直接拷贝原音轨）。"""
+    try:
+        p = subprocess.run([ff, "-hide_banner", "-i", path],
+                           capture_output=True, timeout=30)
+        return bool(re.search(r"Stream\s+.*?Audio:", p.stderr.decode("utf-8", "ignore")))
+    except Exception:
+        return False
+
+
 def strip_audio(ff: str, src: str, tmpdir: str, tag: str = "") -> Tuple[str, bool]:
     """先删除原声：生成只有视频流的无声副本，后续混剪一律基于该副本。
 
@@ -771,8 +781,28 @@ def _assign_scripts(n_videos: int, scripts: List[dict], voice_paths: List[str]):
     n = len(scripts or [])
     if not n:
         return [], False
-    out = [(scripts[i % n], voice_paths[i % n]) for i in range(n_videos)]
+    nv = len(voice_paths or [])
+    # 无配音、只有字幕时 voice_paths 为空，须安全回退为空音频，避免索引越界。
+    out = [(scripts[i % n], voice_paths[i % nv] if nv else "") for i in range(n_videos)]
     return out, n < n_videos
+
+
+def _safe_title_for_filename(title: str, max_chars: int = 24) -> str:
+    """把视频标题清洗成可安全嵌入文件名的片段。
+
+    - 去掉 Windows 非法字符 \\/:*?"<>| 与控制字符，折叠空白；
+    - 去掉首尾空白、点（Windows 不允许以点/空格结尾）；
+    - 截断到 max_chars 字，避免整条路径超过 Windows 260 字符上限；
+    - 标题为空时返回空串，调用方据此回退到不带标题的命名。
+    """
+    s = str(title or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", s)
+    s = re.sub(r"\s+", " ", s).strip().strip(" .")
+    if len(s) > max_chars:
+        s = s[:max_chars].rstrip(" .")
+    return s
 
 
 # 字幕切分边界：
@@ -938,7 +968,8 @@ def render_text_png(style: dict, content: str, w: int, h: int, path: str) -> str
 def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
                          total_dur: float, tpl: dict, script: dict,
                          voice_path: str, bgm_path: str, vcfg: dict,
-                         tmpdir: str, tag: str = "") -> dict:
+                         tmpdir: str, tag: str = "", override_timeline=None,
+                         audio_copy_from: str = "") -> dict:
     """烧录字幕/顶部标题，并把配音 + 背景乐混音到成品视频。
 
     字幕先按「强断点（。！？…；; 及换行）+ 逗号轻断点」切成字幕块（顿号等其余句中
@@ -976,6 +1007,7 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
         layers.append((p, 0.0, total_dur, "title"))
 
     n = len(blocks)
+    align = "estimate"   # 无字幕块时也要有值，避免下方 meta 引用未定义
     timeline = []
     if n >= 1:
         if est_total > 1e-6:
@@ -992,7 +1024,6 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
         # 真实停顿点吸附：配音在句/逗号处有可测停顿时，用它们校正字幕切块边界，
         # 消除「按字数估算 + 全局缩放」造成的中间逐句漂移（首尾仍锚定）。
         # 只有 >=2 块、且有配音文件才尝试；检测失败/点数不足时保留上面的估算 spans。
-        align = "estimate"
         if n >= 2 and voice_path and os.path.exists(voice_path) and voice_dur > 0.05:
             pauses = _detect_voice_pauses(ff, voice_path, show_dur)
             # 至少要有 1 个可用停顿点才吸附，避免无意义调用
@@ -1008,20 +1039,49 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
             layers.append((p, st, en, "subtitle"))
             timeline.append({"start": round(st, 2), "end": round(en, 2), "text": line[:60]})
 
-    # 2) 输入顺序：0=正片，1..k=文字层，k+1=配音，k+2=背景乐
+    # 微调重烧：丢弃按 `script.subtitle` 现场切出的字幕层，完全按编辑后的 timeline 重建。
+    # 不能依赖 meta 里被截断到 120 字的 subtitle_text 去切块（块数会对不上），
+    # 所以直接把 timeline 当作字幕块的唯一真相。标题层保留，画面与音轨不变。
+    if isinstance(override_timeline, list) and override_timeline:
+        layers = [x for x in layers if x[3] != "subtitle"]
+        rebuilt = []
+        for item in override_timeline:
+            try:
+                st = max(0.0, float(item.get("start")))
+                en = max(st + 0.05, float(item.get("end")))
+            except Exception:
+                continue
+            text = str(item.get("text") or "")
+            p = os.path.join(tmpdir, f"txt_{tag}_rb_{len(layers)}.png")
+            render_text_png(sub_style, text, w, h, p)
+            layers.append((p, st, en, "subtitle"))
+            rebuilt.append({"start": round(st, 2), "end": round(en, 2), "text": text[:60]})
+        if rebuilt:
+            timeline = rebuilt
+            align = "manual"
+
+    # 2) 输入顺序：0=正片，1..k=文字层，之后依次 配音/背景乐/原音轨成品
+    # 微调重烧时 audio_copy_from 提供"带原音轨的成品"，其音轨直接拷贝，
+    # 不重新混入配音/背景乐（否则会二次叠加）。
     cmd = [ff, "-y", "-i", video_in]
     for p, _, _, _ in layers:
         cmd += ["-loop", "1", "-t", f"{total_dur:.3f}", "-i", p]
     next_idx = 1 + len(layers)
-    voice_idx = bgm_idx = None
-    if voice_path and os.path.exists(voice_path):
-        voice_idx = next_idx
-        cmd += ["-i", voice_path]
+    voice_idx = bgm_idx = copy_idx = None
+    # 重烧模式：只拷贝成品原音轨，不再读配音/背景乐文件
+    if audio_copy_from and os.path.exists(audio_copy_from) and probe_has_audio(ff, audio_copy_from):
+        copy_idx = next_idx
+        cmd += ["-i", audio_copy_from]
         next_idx += 1
-    if bgm_path and os.path.exists(bgm_path):
-        bgm_idx = next_idx
-        cmd += ["-stream_loop", "-1", "-i", bgm_path]
-        next_idx += 1
+    else:
+        if voice_path and os.path.exists(voice_path):
+            voice_idx = next_idx
+            cmd += ["-i", voice_path]
+            next_idx += 1
+        if bgm_path and os.path.exists(bgm_path):
+            bgm_idx = next_idx
+            cmd += ["-stream_loop", "-1", "-i", bgm_path]
+            next_idx += 1
 
     # 3) 视频链：逐层 overlay，按时间轴 enable 显示；字幕叠加 alpha 淡入淡出让切换更柔和
     fade_sec = max(0.05, float(vcfg.get("subtitle_fade", 0.2)))
@@ -1048,11 +1108,16 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
     if not layers:
         parts.append("[0:v]null[vout]")
 
-    # 4) 音频链：配音 + 背景乐（循环、降音量、淡入淡出）→ amix
-    has_audio = voice_idx is not None or bgm_idx is not None
+    # 4) 音频链：拷贝原音轨（重烧）或 配音 + 背景乐混音（首次合成）
+    has_audio = voice_idx is not None or bgm_idx is not None or copy_idx is not None
     trim_T = f"{total_dur:.3f}"
     fade_out_st = f"{max(0.0, total_dur - fade):.2f}"
-    if voice_idx is not None and bgm_idx is not None:
+    if copy_idx is not None:
+        # 重烧：原样拷贝成品音轨，**不做 atrim**。成品音轨（配音）常比画面时长更长，
+        # 早先用 atrim=0:画面时长 + 全局 -t 会把配音后半段截掉（用户反馈「后面声音没了」）。
+        # 这里不在 filter 链里生成 [aout]，改用 -c:a copy 直接映射原音轨流。
+        pass
+    elif voice_idx is not None and bgm_idx is not None:
         parts.append(f"[{voice_idx}:a]atrim=0:{trim_T},apad,"
                      f"afade=t=in:st=0:d={fade:.2f},volume={voice_vol}[va]")
         parts.append(f"[{bgm_idx}:a]atrim=0:{trim_T},apad,"
@@ -1068,13 +1133,23 @@ def apply_script_and_bgm(ff: str, video_in: str, out_path: str, w: int, h: int,
                      f"volume={bgm_vol}[aout]")
 
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]"]
-    if has_audio:
+    if copy_idx is not None:
+        # 重烧：音轨直接流拷贝（不解码、不重编码、不截断），完整保留原配音/背景乐。
+        # 注意不能再加全局 -t（否则会截断音轨），画面长度由底片本身决定。
+        cmd += ["-map", f"{copy_idx}:a", "-c:a", "copy"]
+    elif has_audio:
         cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
     else:
         cmd += ["-an"]
-    cmd += ["-t", trim_T, "-r", "30", "-c:v", "libx264",
-            "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart", out_path]
+    if copy_idx is not None:
+        # 重烧不设 -t：音轨原样保留；画面由字幕层 -t 与底片时长自然收口。
+        cmd += ["-r", "30", "-c:v", "libx264",
+                "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", out_path]
+    else:
+        cmd += ["-t", trim_T, "-r", "30", "-c:v", "libx264",
+                "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", out_path]
     subprocess.run(cmd, check=True, capture_output=True, timeout=900)
     return {"source": script.get("source", "manual"),
             "template": tpl.get("name") or "内置默认模板",
@@ -1113,6 +1188,44 @@ def _run_ff(cmd: list, timeout: int, ff: str, tmpdir: str, tag: str) -> None:
         raise RuntimeError("ffmpeg 处理失败 [%s]: %s" % (tag, " | ".join(brief)[:500]))
 
 
+def qc_scan_video(ff: str, path: str, min_black: float = 0.4) -> dict:
+    """成品质检：检测黑段 / 时长，返回可展示的结构化结果（永不抛异常）。
+
+    用 ffmpeg blackdetect 扫一遍画面，阈值取 pix_th=0.10（纯黑/近黑才算），
+    时长 >= min_black 秒才计入（排除转场瞬间的极短暗场）。整段检测不阻断出片。
+    """
+    out = {"status": "ok", "black_count": 0, "black_segments": [],
+           "duration": 0.0, "note": ""}
+    try:
+        out["duration"] = round(probe_duration(ff, path), 2)
+        p = subprocess.run(
+            [ff, "-hide_banner", "-i", path,
+             "-vf", f"blackdetect=d={min_black}:pix_th=0.10",
+             "-an", "-f", "null", "-"],
+            capture_output=True, timeout=300)
+        txt = p.stderr.decode("utf-8", "ignore")
+        starts = re.findall(r"black_start:([0-9.]+)", txt)
+        ends = re.findall(r"black_end:([0-9.]+)", txt)
+        segs = []
+        for i, s in enumerate(starts):
+            st = float(s)
+            en = float(ends[i]) if i < len(ends) else st + min_black
+            segs.append([round(st, 2), round(en, 2)])
+        out["black_segments"] = segs
+        out["black_count"] = len(segs)
+        if segs:
+            out["status"] = "warn"
+            out["note"] = "检测到 %d 段疑似黑屏（%s）" % (
+                len(segs), "、".join(f"{a:.1f}s–{b:.1f}s" for a, b in segs[:3]))
+        elif out["duration"] <= 0:
+            out["status"] = "unknown"
+            out["note"] = "质检未能读取成品时长"
+    except Exception as e:
+        out["status"] = "unknown"
+        out["note"] = "质检跳过（%s）" % type(e).__name__
+    return out
+
+
 def _move_overwrite(src: str, dst: str) -> None:
     """跨盘安全地把 src 移动并覆盖 dst。
 
@@ -1128,6 +1241,60 @@ def _move_overwrite(src: str, dst: str) -> None:
             shutil.move(src, dst)
         else:
             raise
+
+
+def reburn_subtitles(out_dir: str, output_name: str, master_name: str,
+                     cfg: dict, tpl: dict, script: dict, timeline: list,
+                     total_dur: float, progress_cb=None) -> dict:
+    """只重烧字幕：以无字幕底片为画面源，直接拷贝成品原音轨，不重跑合成/混音。
+
+    - out_dir：任务产物目录
+    - output_name：成品文件名（提供原音轨）
+    - master_name：.subtitle_master/ 下的无字幕底片文件名
+    - timeline：用户微调后的 [{start,end,text}, ...]
+    - progress_cb：可选阶段回调 cb(stage=..., percent=...)，供后台任务上报进度
+    返回新的 mix_meta（含 subtitle_timeline / subtitle_align=manual）。
+    """
+    if progress_cb:
+        try:
+            progress_cb(stage="准备字幕", percent=10)
+        except Exception:
+            pass
+    final = os.path.join(out_dir, output_name)
+    master = os.path.join(out_dir, ".subtitle_master", master_name)
+    if not os.path.exists(master) or not os.path.exists(final):
+        raise FileNotFoundError("无字幕底片缺失，无法只重烧字幕（旧任务需重新合成）")
+    ff = get_ffmpeg()
+    w, h = probe_dimensions(ff, master)
+    if not w or not h:
+        v = (cfg or {}).get("video") or {}
+        w, h = (1080, 1920) if str(v.get("aspect", "9:16")) == "9:16" else (1920, 1080)
+    tmpdir = tempfile.mkdtemp(prefix="lf_reburn_")
+    try:
+        tmp_out = os.path.join(tmpdir, "reburn.mp4")
+        if progress_cb:
+            try:
+                progress_cb(stage="烧录字幕中", percent=35)
+            except Exception:
+                pass
+        meta = apply_script_and_bgm(
+            ff, master, tmp_out, w, h, total_dur, tpl, script,
+            "", "", cfg.get("video") or {}, tmpdir, tag="rb",
+            override_timeline=timeline, audio_copy_from=final)
+        if progress_cb:
+            try:
+                progress_cb(stage="写入成品", percent=90)
+            except Exception:
+                pass
+        _move_overwrite(tmp_out, final)
+        meta["clean_master"] = master_name
+        meta["reburn_ready"] = True
+        return meta
+    finally:
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
@@ -1417,8 +1584,17 @@ def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
                                      motion=None if is_video else clip_motion,
                                      strength=motion_strength))
         all_fits.extend(group_fits)
-        suffix = f"_{gi + 1}" if len(groups) > 1 else ""
-        final = os.path.join(out_dir, f"合成视频{suffix}.mp4")
+        # 成品命名：合成视频_序号_视频标题.mp4（如「合成视频_1_木纹砖如何美缝.mp4」）。
+        # 无字幕底片同步命名为「无字幕底片_序号_视频标题.mp4」，两者共用同一组
+        # 序号+标题，严格一一对应（字幕微调重烧时靠此对应定位底片）。
+        # 序号始终带（单条也是 _1）；标题取自该条脚本 title（顶部标题），
+        # 空标题回退到「合成视频_序号 / 无字幕底片_序号」。清洗非法字符 + 限长防路径超长。
+        _scr = (assigned_scripts[gi][0] if assigned_scripts and gi < len(assigned_scripts) else {}) or {}
+        _title_part = _safe_title_for_filename(_scr.get("title") or "")
+        _name_part = ("_" + _title_part) if _title_part else ""
+        _pair_part = f"_{gi + 1}{_name_part}"
+        final = os.path.join(out_dir, f"合成视频{_pair_part}.mp4")
+        _master_name = f"无字幕底片{_pair_part}.mp4"
         main_path = os.path.join(tmpdir, f"main_{gi}.mp4")
         used_transitions = []
         t_eff = min(max(t_dur, 0.2), d * 0.9)  # 防止转场≥片段时长导致非法
@@ -1484,11 +1660,24 @@ def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
             if progress_cb:
                 _pct_s = int(8 + (gi / len(groups)) * 80 + (80 / len(groups)) * 0.70)
                 progress_cb(stage=f"第 {gi + 1} 条：烧录字幕 / 混入配音与背景乐", percent=_pct_s)
+            # 保留无字幕底片：供后续「字幕时间轴微调」只重烧字幕、不动画面与音轨。
+            # 放在作品目录下的 .subtitle_master/ 隐藏目录，与成品同生命周期。
+            # 底片名与成品名共用同一序号+标题（_pair_part），严格一一对应。
+            master_dir = os.path.join(out_dir, ".subtitle_master")
+            master = os.path.join(master_dir, _master_name)
+            try:
+                os.makedirs(master_dir, exist_ok=True)
+                shutil.copyfile(final, master)
+            except Exception:
+                master = ""
             mixed = os.path.join(tmpdir, f"mixed_{gi}.mp4")
             mix_meta = apply_script_and_bgm(
                 ff, final, mixed, w, h, real_dur, vtpl, script,
                 voice_path, bgm_path, v, tmpdir, tag=f"g{gi}")
             _move_overwrite(mixed, final)   # 临时目录(C盘)→作品目录(可能E盘)，需跨盘安全覆盖
+            if mix_meta is not None:
+                mix_meta["clean_master"] = os.path.basename(master) if master else ""
+                mix_meta["reburn_ready"] = bool(master)
             total_dur = real_dur
 
         outputs.append(os.path.basename(final))
@@ -1498,6 +1687,19 @@ def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
                             "transitions": used_transitions,
                             "script": mix_meta, "bgm": bgm_name,
                             "sources": group_fits})
+
+    # 成品质检：逐条扫描黑段/时长；仅提示、不阻断出片。失败内联返回 unknown。
+    qc_results = []
+    if cfg.get("qc_enabled", True):
+        if progress_cb:
+            progress_cb(stage="质检中…", percent=96)
+        for name in outputs:
+            qc_results.append(qc_scan_video(ff, os.path.join(out_dir, name)))
+    qc_summary = {
+        "status": ("warn" if any(x.get("status") == "warn" for x in qc_results)
+                   else ("unknown" if any(x.get("status") == "unknown" for x in qc_results) else "ok")),
+        "outputs": qc_results,
+    }
 
     # 收尾处理（写入元数据、清理临时目录前）：进度接近完成，留给前端倒计时收口
     if progress_cb:
@@ -1515,7 +1717,7 @@ def process_video(items: List[Tuple[str, bytes]], cfg: dict, out_dir: str,
     except Exception:
         pass
 
-    return {"ok": True, "outputs": outputs, "originality": detail,
+    return {"ok": True, "outputs": outputs, "originality": detail, "qc": qc_summary,
             "video_meta": {"width": w, "height": h, "video_count": len(groups),
                            "total_clips": n_total,
                            "transitions_pool": transitions,

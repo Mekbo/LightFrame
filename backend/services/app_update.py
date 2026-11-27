@@ -31,8 +31,8 @@ from datetime import datetime, timedelta
 from ..core.config import CONFIG_DIR, load_config, save_config
 
 APP_NAME = "光影工坊"
-APP_VERSION = "1.0.4"
-RELEASE_DATE = "2026-11-25"
+APP_VERSION = "1.0.5"
+RELEASE_DATE = "2026-11-27"
 REPO_URL = "https://github.com/Mekbo/LightFrame.git"
 REPO_WEB = "https://github.com/Mekbo/LightFrame"
 REPO_API = "https://api.github.com/repos/Mekbo/LightFrame/releases/latest"
@@ -52,10 +52,23 @@ _NET_BACKOFF = 0.6       # 重试间隔基数（秒），逐次递增
 _lock = threading.Lock()
 _LAST_SSL_MODE = "default"   # 最近一次成功的证书策略，供状态接口展示诊断
 # 构建标记：一旦错误信息里出现它，即证明本版本代码已被加载（用于排查"替换后未重启"）
-BUILD_TAG = "v1.0.4-videofix-20261125"
+BUILD_TAG = "v1.0.5-uxupgrade-20261127"
 
 # 本地功能更新日志（随版本发布维护；远端 Release 说明另行展示）
 CHANGELOG = [
+    {
+        "version": "1.0.5",
+        "date": RELEASE_DATE,
+        "title": "第一梯队体验升级：成品质检 / 合成预设 / 失败原样重试 / 字幕时间轴微调",
+        "items": [
+            "成品质检：视频合成完成后自动扫描黑屏片段与时长异常，任务卡片显示「画质正常 / 质检提醒」标记，有问题一眼可见，不用逐个打开成品检查",
+            "合成预设：视频创作第⑨步可把当前一套参数存为预设并命名，下次一键套用，常用配置不再反复手填；预设按账号隔离，不保存素材与字幕样式等敏感对象",
+            "失败任务重启后原样重试：任务失败时的完整上下文持久化到磁盘，重启应用后仍可「原样重试」，沿用原素材与配置重跑，不再因内存丢失而从头手填",
+            "字幕时间轴微调：成品预览新增「字幕微调」，逐句可视化调整出现时间，保存后只重烧字幕，画面与配音原样保留；重烧改为后台任务，任务卡片显示排队/进度/完成，与剪辑新视频一致；进行中的成品禁止重复重烧，防止任务叠加",
+            "成品命名升级：成品改为「合成视频_序号_视频标题.mp4」，无字幕底片对应「无字幕底片_序号_视频标题.mp4」，序号与标题严格对齐，多个成品一眼可辨；标题自动清洗非法字符与限长",
+            "修复字幕重烧的一系列边界问题：中文成品名不再误报「无底片」、重烧不再丢失后半段配音（改为直接拷贝原音轨）、重烧样式读取不再回退默认值；升级前合成的旧任务按钮灰掉并说明原因",
+        ],
+    },
     {
         "version": "1.0.4",
         "date": RELEASE_DATE,

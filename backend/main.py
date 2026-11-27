@@ -39,6 +39,8 @@ from .services import app_updater as updater_svc
 from .services import developer_contact as dev_svc
 from .services import space as space_svc
 from .services import material as mat_svc
+from .services import presets as preset_svc
+from .services import retry_store as retry_svc
 from .services.taskmgr import TaskManager
 
 BASE = Path(__file__).resolve().parent.parent
@@ -764,13 +766,26 @@ async def retry_task_api(tid: str, request: Request):
     if t.get("status") != "failed":
         return {"ok": False, "error": "仅「失败」状态的任务可以重试"}
     job = mgr.jobs.get(tid)
+    kind = t.get("kind")
+    if not job:
+        # 服务重启后内存上下文丢失：从磁盘快照恢复（仅视频任务，owner 严格校验）
+        restored = retry_svc.load(tid, t.get("owner_id") or "") if kind == "video" else None
+        if restored:
+            job = restored
+            mgr.jobs[tid] = job
     if not job:
         return {"ok": False,
-                "error": "该任务的重试上下文已失效（服务重启过或已被新失败任务挤出），请重新提交任务"}
-    kind = t.get("kind")
+                "error": "该任务的重试上下文已失效（服务重启前未保存或已被清理），请重新提交任务"}
     mgr.cancelled.discard(tid)
     mgr.unpause(tid)
     mgr.renumber(tid)          # 重试按「新提交」排到队尾，不插队
+    # 字幕重烧失败的重试：重新排队只重烧字幕，不能用视频合成上下文整段重跑
+    if job.get("op") == "reburn":
+        mgr.progress(tid, status="pending", stage="字幕重烧排队中", percent=0,
+                     log="", started_at=None, reburn_running=True)
+        asyncio.create_task(_run_reburn_job(tid))
+        return {"ok": True, "status": "pending", "task_id": tid, "kind": kind,
+                "op": "reburn"}
     if kind == "video":
         # 视频合成是原子操作：整段重跑，清掉上次的产物清单与进度
         job["outputs"] = []
@@ -788,6 +803,211 @@ async def retry_task_api(tid: str, request: Request):
               _run_video_job if kind == "video" else _run_job)
     asyncio.create_task(runner(tid))
     return {"ok": True, "status": "pending", "task_id": tid, "kind": kind}
+
+
+# ------------------------------ 合成预设（按用户隔离，只存参数） ------------------------------
+
+@app.get("/api/presets")
+def list_presets(request: Request):
+    u = cu(request)
+    uid = u.get("id") or ""
+    if not uid:
+        return {"ok": False, "error": "请登录后使用合成预设"}
+    return {"ok": True, "data": preset_svc.list_presets(uid)}
+
+
+@app.post("/api/presets")
+def create_preset(request: Request, body: dict = Body(default={})):
+    u = cu(request)
+    uid = u.get("id") or ""
+    if not uid:
+        return {"ok": False, "error": "请登录后使用合成预设"}
+    try:
+        return {"ok": True, "data": preset_svc.create_preset(uid, body or {})}
+    except preset_svc.PresetError as e:
+        return {"ok": False, "error": e.message if hasattr(e, "message") else str(e)}
+
+
+@app.get("/api/presets/{pid}")
+def get_preset(pid: str, request: Request):
+    u = cu(request)
+    uid = u.get("id") or ""
+    if not uid:
+        return {"ok": False, "error": "请登录后使用合成预设"}
+    try:
+        return {"ok": True, "data": preset_svc.get_preset(uid, pid)}
+    except preset_svc.PresetError as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.delete("/api/presets/{pid}")
+def delete_preset(pid: str, request: Request):
+    u = cu(request)
+    uid = u.get("id") or ""
+    if not uid:
+        return {"ok": False, "error": "请登录后使用合成预设"}
+    try:
+        return {"ok": True, "data": preset_svc.delete_preset(uid, pid)}
+    except preset_svc.PresetError as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ------------------------------ 字幕时间轴微调（只重烧字幕） ------------------------------
+
+@app.post("/api/tasks/{tid}/subtitle/reburn")
+async def reburn_subtitle_api(tid: str, request: Request, body: dict = Body(default={})):
+    """按用户微调的时间轴只重烧字幕：画面与音轨沿用原成品，不重跑合成/混音。
+
+    提交后立即返回，实际重烧交给后台任务（走全局并发闸门），
+    任务卡片显示与剪辑视频一致的阶段/进度。重烧进行中锁定该成品，禁止重复提交。
+    """
+    t = owned_task(tid, request)
+    if not t:
+        return fail("FORBIDDEN", "无权操作该任务")
+    if t.get("status") != "done" or t.get("kind") != "video":
+        # 重烧/合成进行中（非 done）时再次提交 → 明确提示，避免重复烧写同一成品
+        if t.get("reburn_running"):
+            return {"ok": False, "error": "该成品正在重烧中，请等待任务结束后再操作"}
+        return {"ok": False, "error": "仅已完成的视频任务可做字幕微调"}
+    od = t.get("out_dir") or ""
+    user = cu(request)
+    if not od or not path_allowed(od, user):
+        return fail("FORBIDDEN", "产物目录不可访问")
+    body = body or {}
+    try:
+        idx = int(body.get("output_index", 0))
+    except Exception:
+        idx = 0
+    outputs = list(t.get("outputs") or [])
+    meta = dict(t.get("meta") or {})
+    videos = list(meta.get("videos") or [])
+    if idx < 0 or idx >= len(outputs) or idx >= len(videos):
+        return {"ok": False, "error": "成品序号无效"}
+    vm = videos[idx] or {}
+    script_meta = dict(vm.get("script") or {})
+    master = str(script_meta.get("clean_master") or "")
+    # 底片名沿用成品文件名，中文名（如「合成视频_4.mp4」）完全合法。
+    # 早先用 ASCII-only 正则校验会把中文成品名误判成「无底片」——新任务照样报错。
+    # 统一走 basename_ok()：防路径穿越，但允许中文/空格等合法文件名。
+    if not master or len(master) > 180 or not basename_ok(master):
+        return {"ok": False, "error": "该任务没有可重烧的无字幕底片（旧任务请重新合成）"}
+    timeline = body.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        return {"ok": False, "error": "字幕时间轴不能为空"}
+    # 严格校验时间轴：块数与原文一致、边界单调递增、不超出成品时长
+    old_tl = list(script_meta.get("subtitle_timeline") or [])
+    if len(timeline) != len(old_tl) and old_tl:
+        return {"ok": False, "error": "字幕块数量与原文不一致，不能重烧"}
+    total = float(vm.get("duration") or 0) or float(script_meta.get("subtitle_duration") or 0) or 0
+    cleaned = []
+    prev_end = 0.0
+    try:
+        for i, item in enumerate(timeline):
+            st = round(float(item.get("start")), 2)
+            en = round(float(item.get("end")), 2)
+            if st < prev_end - 0.02:
+                return {"ok": False, "error": f"第 {i + 1} 块字幕起点早于上一块终点，请调整顺序"}
+            if en <= st:
+                return {"ok": False, "error": f"第 {i + 1} 块字幕终点必须晚于起点"}
+            if total and en > total + 0.5:
+                return {"ok": False, "error": f"第 {i + 1} 块字幕超出视频时长"}
+            text = str(item.get("text") or (old_tl[i].get("text") if i < len(old_tl) else ""))[:60]
+            cleaned.append({"start": st, "end": en, "text": text})
+            prev_end = en
+    except Exception:
+        return {"ok": False, "error": "时间轴格式不正确"}
+    # 还原字幕文本与模板：模板以模板中心为唯一数据源，按 id 取最新；取不到用任务内固化样式
+    cfg = t.get("meta") or {}
+    vcfg = {}
+    try:
+        # 用任务 owner 读配置，不能用未定义的 uid（早先 NameError 被吞，导致样式回默认）
+        loaded = load_config(t.get("owner_id") or "")
+        vcfg = dict((loaded or {}).get("video") or {})
+    except Exception:
+        pass
+    script_text = str(script_meta.get("subtitle_text") or "")
+    script = {"subtitle": script_text, "title": str(script_meta.get("title") or ""),
+              "source": script_meta.get("source", "manual")}
+    tpl_id = str((meta.get("template") or {}).get("id") or "")
+    # 校验全部通过 → 打包上下文，交给后台任务执行（与剪辑视频同一套队列/状态/进度）
+    # 重烧期间标记 reburn_running：既驱动卡片状态，也作为「禁止重复提交」的判据。
+    mgr.jobs[tid] = {
+        "op": "reburn", "out_dir": od, "output_name": outputs[idx],
+        "master": master, "vcfg": vcfg, "tpl_id": tpl_id, "script": script,
+        "timeline": cleaned, "total": total, "owner_id": t.get("owner_id") or "",
+        "meta": meta, "idx": idx,
+    }
+    mgr.renumber(tid)   # 排到队尾，不抢占正在剪辑的任务
+    mgr.progress(tid, status="pending", stage="字幕重烧排队中", percent=0,
+                 log="", started_at=None, reburn_running=True,
+                 outputs=list(outputs))
+    asyncio.create_task(_run_reburn_job(tid))
+    auth.audit(user, "subtitle.reburn", f"tid={tid} idx={idx} (提交后台)")
+    return {"ok": True, "status": "pending", "task_id": tid,
+            "timeline": cleaned, "queued": True}
+
+
+async def _run_reburn_job(tid: str):
+    """占用全局并发闸门执行字幕重烧，完成后写回 meta 并落盘。
+
+    复用 _run_video_job 的状态机（排队/运行/取消/完成/失败），
+    但只做字幕烧录，不重跑合成/混音；失败保留上下文供「重新重烧」。
+    """
+    t0 = mgr.tasks.get(tid) or {}
+    granted = await mgr.semaphore.acquire(
+        tid=tid, seq=t0.get("seq"),
+        on_wait=lambda: mgr.progress(tid, stage="字幕重烧排队中"))
+    if not granted:
+        # 排队期间被取消 / 删除：未占用名额，清掉重烧锁后直接退出
+        mgr.progress(tid, reburn_running=False)
+        return
+    try:
+        if mgr.is_cancelled(tid):
+            mgr.progress(tid, status="cancelled", stage="已取消", reburn_running=False)
+            return
+        job = mgr.jobs.get(tid)
+        if not job or job.get("op") != "reburn":
+            # 上下文丢失（如服务重启竞态）：解锁并回到完成态，避免任务永久卡住
+            mgr.progress(tid, status="done", stage="完成", reburn_running=False)
+            return
+        mgr.progress(tid, status="running", stage="字幕重烧中", percent=5)
+
+        def _cb(**kw):
+            # 仅透传 stage / percent：进度回调在 executor 线程里触发，mgr.progress 线程安全
+            mgr.progress(tid, **{k: v for k, v in kw.items() if k in ("stage", "percent")})
+
+        tpl_id = job.get("tpl_id") or ""
+        tpl = (vtpl_svc.get_template(tpl_id) if tpl_id else None) or vtpl_svc.default_template()
+        new_meta = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: video_svc.reburn_subtitles(
+                job["out_dir"], job["output_name"], job["master"],
+                {"video": job.get("vcfg") or {}}, tpl, job.get("script") or {},
+                job.get("timeline") or [], job.get("total") or 0, progress_cb=_cb))
+        if mgr.is_cancelled(tid):
+            mgr.progress(tid, status="cancelled", stage="已取消", reburn_running=False)
+            return
+        # 更新任务 meta 的时间轴与对齐方式（成品/底片/音轨均未被破坏）
+        meta = dict(job.get("meta") or {})
+        videos = list(meta.get("videos") or [])
+        idx = int(job.get("idx") or 0)
+        script_meta = dict((videos[idx].get("script") if 0 <= idx < len(videos) else {}) or {})
+        script_meta.update(new_meta)
+        script_meta["subtitle_timeline"] = job.get("timeline") or []
+        if 0 <= idx < len(videos):
+            videos[idx]["script"] = script_meta
+        meta["videos"] = videos
+        mgr.progress(tid, status="done", percent=100, stage="字幕重烧完成",
+                     reburn_running=False, meta=meta, log="")
+    except Exception as e:
+        mgr.progress(tid, status="failed", stage="字幕重烧失败",
+                     log="字幕重烧失败：%s" % str(e)[:200], reburn_running=False)
+    finally:
+        await mgr.semaphore.release()
+        t = mgr.tasks.get(tid)
+        # 失败保留上下文供「重新重烧」；成功/取消清理
+        if not (t and t.get("status") == "failed" and mgr.jobs.get(tid, {}).get("op") == "reburn"):
+            mgr.jobs.pop(tid, None)
+        _prune_failed_jobs()
 
 
 @app.delete("/api/tasks/{tid}")
@@ -875,9 +1095,13 @@ def clear_tasks(request: Request, ids: Optional[list] = Body(default=None)):
         if not policy.allowed(user["role"], "task.clear_all"):
             return fail("FORBIDDEN", "仅管理员可清空全部任务")
         auth.audit(user, "task.clear_all")
+        for tid in [str(x) for x in mgr.jobs]:
+            retry_svc.remove(tid)
         return {"ok": True, "removed": mgr.clear(None)}
     if any(not owned_task(str(tid), request) for tid in ids):
         return fail("FORBIDDEN", "包含无权操作的任务")
+    for tid in [str(x) for x in ids]:
+        retry_svc.remove(str(tid))
     return {"ok": True, "removed": mgr.clear(ids)}
 
 
@@ -903,6 +1127,7 @@ def delete_tasks(request: Request, ids: Optional[list] = Body(default=None)):
         if str(tid) in mgr.tasks:
             mgr.remove(str(tid))
             removed += 1
+        retry_svc.remove(str(tid))
     mgr.persist()
     space_svc.mark_dirty(user.get("id") or "")   # 产物已删，用量待重扫
     auth.audit(user, "file.delete_batch", f"count={removed}")
@@ -1738,6 +1963,7 @@ async def _run_video_job(tid):
             mgr.progress(tid, status="done", percent=100, stage="完成",
                          outputs=list(out.get("outputs", [])),
                          meta=out.get("video_meta"),
+                         qc=out.get("qc"),
                          originality=out.get("originality"))
         else:
             # 原创度不达标 / 处理异常：停止执行并给出原因
@@ -1748,9 +1974,12 @@ async def _run_video_job(tid):
     finally:
         await mgr.semaphore.release()
         t = mgr.tasks.get(tid)
-        # 失败任务保留上下文（items/cfg/covers/scripts/voices/bgm/user）供「重试」原样重跑
+        # 失败任务保留上下文供「重试」原样重跑；同时落盘快照，服务重启后仍可恢复
+        if t and t.get("status") == "failed" and mgr.jobs.get(tid):
+            retry_svc.save(tid, t.get("owner_id") or "", "video", mgr.jobs[tid])
         if not t or t.get("status") in ("done", "cancelled") or tid not in mgr.tasks:
             mgr.jobs.pop(tid, None)
+            retry_svc.remove(tid)
         _prune_failed_jobs()
 
 
@@ -1903,7 +2132,7 @@ def get_output(name: str, request: Request, tid: str = ""):
     if not basename_ok(name):
         return fail("INVALID_PATH", "非法文件名", 400)
     user = cu(request)
-    # 带 tid 时按任务精确定位：多个视频任务都输出「合成视频.mp4」，按名字搜会串文件
+    # 带 tid 时按任务精确定位：多个视频任务的成品名可能相近，按名字全局搜会串文件
     if tid:
         t = owned_task(tid, request)
         if not t:
